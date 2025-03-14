@@ -2,13 +2,13 @@ name: Run Anime News Bot
 
 on:
   schedule:
-    - cron: "*/15 * * * *"  # Run every 15 minutes
+    - cron: "0 */30 * * * *"  # Run every 30 minutes (at the start of the hour and half-hour)
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 5  # Limit job runtime to 5 minutes
+    timeout-minutes: 5
 
     steps:
     - name: Checkout repository
@@ -28,4 +28,7 @@ jobs:
       env:
         BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         CHAT_ID: ${{ secrets.CHAT_ID }}
-      run: python animebot.py
+      run: |
+        # Ensure the data file is created if it doesn't exist
+        touch posted_news.json
+        python animebot.py
