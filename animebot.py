@@ -116,16 +116,16 @@ async def post_to_telegram():
             
             # Send image with caption if available
             if image_url:
-                caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
-                await bot.send_photo(chat_id=CHAT_ID, photo=image_url, caption=caption)
+                image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
+                await bot.send_photo(chat_id=CHAT_ID, photo=image_url, caption=image_caption)
                 logging.info(f"Sent image to Telegram with caption: {image_url}")
             
             # Send text message with caption for all posts
             message = f"{emoji_title}\n\n{emoji_summary}"
-            caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
+            text_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
             logging.info(f"Attempting to send message to Telegram: {message}")
             logging.info(f"Message length: {len(message)}, Bytes: {len(message.encode('utf-8'))}")
-            response = await bot.send_message(chat_id=CHAT_ID, text=message, caption=caption)
+            response = await bot.send_message(chat_id=CHAT_ID, text=message, caption=text_caption)
             logging.info(f"News posted successfully. Response: {response}")
             # Save the posted news to avoid duplicates
             save_posted_news(title_hash)
