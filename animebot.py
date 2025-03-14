@@ -5,6 +5,7 @@ import logging
 import asyncio
 from tenacity import retry, stop_after_attempt, wait_fixed
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+import telegram
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,8 @@ ANN_URL = "https://www.animenewsnetwork.com/news/"
 if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
     exit(1)
+
+bot = telegram.Bot(token=BOT_TOKEN)
 
 async def load_posted_news():
     """Load previously posted news titles from file."""
@@ -43,29 +46,35 @@ async def fetch_news():
         browser = await p.chromium.launch()
         page = await browser.new_page()
         try:
-            await page.goto(ANN_URL, wait_until="networkidle", timeout=30000)  # 30s timeout
+            await page.goto(ANN_URL, wait_until="networkidle", timeout=60000)  # Increased to 60s
             logging.info(f"Successfully loaded ANN page: {ANN_URL}")
-            # Wait for a news article to load (adjust selector based on inspection)
-            await page.wait_for_selector(".herald.box.news, article, .mainfeed-day", state="visible", timeout=10000)
+            # Wait for a news article to load (updated selectors)
+            await page.wait_for_selector(".wrap, .news-item, .herald.box.news, article, .mainfeed-day", state="visible", timeout=30000)  # Increased to 30s
             content = await page.content()
-            logging.debug(f"Page snippet: {content[:500]}")
+            logging.debug(f"Page content: {content[:1000]}")  # Log more content for debugging
             # Extract the first article
-            article = await page.query_selector(".herald.box.news, article, .mainfeed-day")
+            article = await page.query_selector(".wrap, .news-item, .herald.box.news, article, .mainfeed-day")
             if not article:
                 logging.warning("No article found on the page using any selector.")
                 return None
             # Extract title
             title_element = await article.query_selector("h3, h2, h1")
             title = await title_element.inner_text() if title_element else "No Title"
+            title = title.strip()
             title_hash = hashlib.md5(title.encode()).hexdigest()
             posted_news = await load_posted_news()
             if title_hash in posted_news:
                 logging.info(f"News already posted: {title}")
                 return None
             # Extract summary (first meaningful paragraph)
-            summary_element = await article.query_selector("p")
-            summary = await summary_element.inner_text() if summary_element else "No summary available for this article. 📜"
-            summary = summary.strip()[:200] + "..." if summary else "No summary available for this article. 📜"
+            summary_elements = await article.query_selector_all("p")
+            summary = "No summary available for this article. 📜"
+            for element in summary_elements:
+                text = await element.inner_text()
+                text = text.strip()
+                if text and "see the archives" not in text.lower() and len(text) > 20:
+                    summary = text[:200] + "..."
+                    break
             # Extract image URL
             img_element = await article.query_selector("img.thumbnail, img[src*=jpg], img[src*=png], img[src*=jpeg]")
             image_url = await img_element.get_attribute("src") if img_element else None
@@ -76,8 +85,8 @@ async def fetch_news():
                 image_url = "https://via.placeholder.com/300x200?text=Anime+News+🌟"
             logging.info(f"Fetched news: Title={title}, Summary={summary}, Image URL={image_url}")
             return {"title": title, "summary": summary, "image_url": image_url, "title_hash": title_hash}
-        except PlaywrightTimeoutError:
-            logging.error("Timeout waiting for page or article to load.")
+        except PlaywrightTimeoutError as e:
+            logging.error(f"Timeout waiting for page or article to load: {e}")
             return None
         except Exception as e:
             logging.error(f"Error fetching or parsing ANN page: {e}")
