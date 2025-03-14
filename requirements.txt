@@ -2,3 +2,4 @@ requests
 beautifulsoup4
 tenacity
 python-telegram-bot
+lxml
