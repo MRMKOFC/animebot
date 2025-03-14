@@ -3,6 +3,7 @@ import requests
 from bs4 import BeautifulSoup
 import telegram
 import logging
+import asyncio
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -31,12 +32,12 @@ def fetch_news():
         logging.error(f"Error fetching news: {e}")
         return None
 
-def post_to_telegram():
+async def post_to_telegram():
     news = fetch_news()
     if news:
         try:
             message = f"✨ *{news['title']}* ✨\n\n📖 {news['summary']}\n\n🌟 \"Powered by:@TheAnimeTimes_acn\" 🌟"
-            bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown")
+            await bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown")
             logging.info("News posted successfully")
         except Exception as e:
             logging.error(f"Error posting to Telegram: {e}")
@@ -44,4 +45,4 @@ def post_to_telegram():
         logging.warning("No news to post")
 
 if __name__ == "__main__":
-    post_to_telegram()
+    asyncio.run(post_to_telegram())
