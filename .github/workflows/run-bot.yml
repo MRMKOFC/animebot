@@ -2,7 +2,7 @@ name: Run Anime News Bot
 
 on:
   schedule:
-    - cron: "0 */30 * * * *"  # Run every 30 minutes (at the start of the hour and half-hour)
+    - cron: "*/30 * * * *"  # Run every 30 minutes (at the start of the hour and half-hour)
   workflow_dispatch:  # Allow manual triggering
 
 jobs:
