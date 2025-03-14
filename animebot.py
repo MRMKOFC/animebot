@@ -48,16 +48,21 @@ def fetch_news():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
     try:
-        response = requests.get(url, timeout=15, headers=headers)
+        response = requests.get(url, timeout=30, headers=headers)  # Increased timeout
         response.raise_for_status()
+        logging.info(f"Successfully fetched ANN page: {response.status_code}")
         soup = BeautifulSoup(response.content, "html.parser")
-        # Extract the first news article
-        article = soup.find("div", class_="herald box news")
+        # Log a snippet of the page content for debugging
+        logging.debug(f"Page snippet: {str(soup)[:500]}")
+        # Try multiple selectors to find the article
+        article = (soup.find("div", class_="herald box news") or
+                   soup.find("article") or
+                   soup.find("div", class_="mainfeed-day"))
         if not article:
-            logging.warning("No article found on the page.")
+            logging.warning("No article found on the page using any selector.")
             return None
         # Extract title
-        title_tag = article.find("h3")
+        title_tag = article.find("h3") or article.find("h2") or article.find("h1")
         title = title_tag.text.strip() if title_tag else "No Title"
         title_hash = hashlib.md5(title.encode()).hexdigest()
         posted_news = load_posted_news()
@@ -73,7 +78,8 @@ def fetch_news():
                 break
         summary = summary_tag.text.strip()[:200] + "..." if summary_tag else "No summary available for this article. 📜"
         # Extract first image URL, handle relative URLs
-        img_tag = article.find("img", class_="thumbnail") or article.find("img", {"src": re.compile(r'.*\.jpg$|\.png$|\.jpeg$')})
+        img_tag = (article.find("img", class_="thumbnail") or
+                   article.find("img", {"src": re.compile(r'.*\.jpg$|\.png$|\.jpeg$')}))
         image_url = img_tag['src'] if img_tag and 'src' in img_tag.attrs else None
         if image_url and not image_url.startswith("http"):
             image_url = f"https://www.animenewsnetwork.com{image_url}"
@@ -82,8 +88,11 @@ def fetch_news():
             image_url = "https://via.placeholder.com/300x200?text=Anime+News+🌟"
         logging.info(f"Fetched news: Title={title}, Summary={summary}, Image URL={image_url}")
         return {"title": title, "summary": summary, "image_url": image_url, "title_hash": title_hash}
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to fetch ANN page: {e}")
+        return None
     except Exception as e:
-        logging.error(f"Error fetching news: {e}")
+        logging.error(f"Error parsing ANN page: {e}")
         return None
 
 def sanitize_text(text):
