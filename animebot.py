@@ -26,7 +26,6 @@ CHAT_ID = os.getenv("CHAT_ID")      # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
-CHECK_INTERVAL = 180  # Reduced from 300 to 180 seconds (3 minutes)
 DEBUG_MODE = False  # Set to True to disable date filter for testing
 
 if not os.path.exists(TEMP_DIR):
@@ -75,7 +74,7 @@ def fetch_article_details(article_url, article):
     # Fetch article content
     if article_url:
         try:
-            article_response = session.get(article_url, timeout=5)  # Reduced timeout from 10 to 5 seconds
+            article_response = session.get(article_url, timeout=5)
             article_response.raise_for_status()
             article_soup = BeautifulSoup(article_response.text, 'html.parser')
             
@@ -105,7 +104,7 @@ def normalize_date(date_text):
 def fetch_anime_news():
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)  # Start of today
     try:
-        response = session.get(BASE_URL, timeout=5)  # Reduced timeout from 10 to 5 seconds
+        response = session.get(BASE_URL, timeout=5)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -163,12 +162,12 @@ def fetch_selected_articles(news_by_date):
             if news['title'] not in posted_titles:
                 articles_to_fetch.append((news['article_url'], news['article']))
 
-    with ThreadPoolExecutor(max_workers=3) as executor:  # Reduced from 5 to 3 workers
+    with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [executor.submit(fetch_article_details, url, article) for url, article in articles_to_fetch]
         
         for idx, future in enumerate(futures):
             try:
-                result = future.result(timeout=10)  # Reduced from 15 to 10 seconds
+                result = future.result(timeout=10)
                 article_url = articles_to_fetch[idx][0]
                 for news_list in news_by_date.values():
                     for news in news_list:
@@ -206,13 +205,13 @@ def send_to_telegram(title, image_url, summary):
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
                 data={'photo': image_url, **params},
-                timeout=5  # Reduced timeout
+                timeout=5
             )
         else:
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                 data={'text': caption, **params},
-                timeout=5  # Reduced timeout
+                timeout=5
             )
 
         response.raise_for_status()
@@ -223,34 +222,30 @@ def send_to_telegram(title, image_url, summary):
         logging.error(f"Telegram post failed: {e}")
         return False
 
-def auto_mode():
-    logging.info("Starting Anime News Bot...")
-    while True:
-        try:
-            logging.info("Fetching news from ANN...")
-            news_by_date, article_list = fetch_anime_news()
-            logging.info(f"Found {len(article_list)} articles after filtering")
-            if not news_by_date:
-                logging.info("No articles from today found")
-                time.sleep(CHECK_INTERVAL)
-                continue
+def run_once():
+    logging.info("Starting Anime News Bot in run-once mode...")
+    try:
+        logging.info("Fetching news from ANN...")
+        news_by_date, article_list = fetch_anime_news()
+        logging.info(f"Found {len(article_list)} articles after filtering")
+        if not news_by_date:
+            logging.info("No articles from today found")
+            return
 
-            fetch_selected_articles(news_by_date)
-            new_posts = 0
+        fetch_selected_articles(news_by_date)
+        new_posts = 0
 
-            for date, news_list in sorted(news_by_date.items(), key=lambda x: x[0]):
-                for news in news_list:
-                    if news['title'] not in load_posted_titles():
-                        if send_to_telegram(news['title'], news['image'], news['summary']):
-                            new_posts += 1
-                        time.sleep(1)  # Reduced from 2 to 1 second to post faster
+        for date, news_list in sorted(news_by_date.items(), key=lambda x: x[0]):
+            for news in news_list:
+                if news['title'] not in load_posted_titles():
+                    if send_to_telegram(news['title'], news['image'], news['summary']):
+                        new_posts += 1
+                    time.sleep(1)  # Reduced from 2 to 1 second to post faster
 
-            logging.info(f"Posted {new_posts} new articles")
-            time.sleep(CHECK_INTERVAL)
+        logging.info(f"Posted {new_posts} new articles")
 
-        except Exception as e:
-            logging.error(f"Main loop error: {e}")
-            time.sleep(CHECK_INTERVAL)
+    except Exception as e:
+        logging.error(f"Main loop error: {e}")
 
 if __name__ == "__main__":
-    auto_mode()
+    run_once()  # Run the bot once
