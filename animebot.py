@@ -1,16 +1,13 @@
-import os
-import json
-import logging
-import time
-import re
-from datetime import datetime
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 import requests
 from bs4 import BeautifulSoup
-from telegram import Bot, InputFile
-from telegram.error import TelegramError
-from requests.exceptions import RequestException
+import time
+import re
+import os
+from datetime import datetime
+from collections import defaultdict
+import logging
+from concurrent.futures import ThreadPoolExecutor
+import json
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Setup logging
@@ -24,19 +21,13 @@ logging.basicConfig(
 )
 
 # Configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN", "DEFAULT_NOT_SET")
-CHAT_ID = os.getenv("CHAT_ID", "DEFAULT_NOT_SET")
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Fetch from environment variables
+CHAT_ID = os.getenv("CHAT_ID")      # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
+CHECK_INTERVAL = 180  # Reduced from 300 to 180 seconds (3 minutes)
 DEBUG_MODE = False  # Set to True to disable date filter for testing
-
-# Validate environment variables
-logging.info(f"Loaded BOT_TOKEN: {BOT_TOKEN[:4]}... (partial for security)")
-logging.info(f"Loaded CHAT_ID: {CHAT_ID}")
-if BOT_TOKEN == "DEFAULT_NOT_SET" or CHAT_ID == "DEFAULT_NOT_SET":
-    logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
-    exit(1)
 
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
@@ -67,27 +58,8 @@ def save_posted_title(title):
         titles.add(title)
         with open(POSTED_TITLES_FILE, "w", encoding="utf-8") as file:
             json.dump(list(titles), file)
-        logging.info(f"Saved title to {POSTED_TITLES_FILE}: {title}")
     except Exception as e:
         logging.error(f"Error saving posted title: {e}")
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def download_image(image_url):
-    """Download the original ANN image to a temporary file, return the path or None if fails."""
-    temp_path = os.path.join(TEMP_DIR, "image.jpg")
-    try:
-        response = session.get(image_url, timeout=5, allow_redirects=True)
-        response.raise_for_status()
-        content_type = response.headers.get("Content-Type", "").lower()
-        if "image" not in content_type:
-            logging.warning(f"Invalid image content type {image_url}: {content_type}")
-            return None
-        with open(temp_path, "wb") as f:
-            f.write(response.content)
-        return temp_path
-    except RequestException as e:
-        logging.warning(f"Failed to download image {image_url}: {e}")
-        return None
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_article_details(article_url, article):
@@ -103,7 +75,7 @@ def fetch_article_details(article_url, article):
     # Fetch article content
     if article_url:
         try:
-            article_response = session.get(article_url, timeout=5)
+            article_response = session.get(article_url, timeout=5)  # Reduced timeout from 10 to 5 seconds
             article_response.raise_for_status()
             article_soup = BeautifulSoup(article_response.text, 'html.parser')
             
@@ -119,8 +91,9 @@ def fetch_article_details(article_url, article):
 
 def normalize_date(date_text):
     try:
+        date_obj = datetime.strptime(date_text, "%b %d, %H:%M")
         current_year = datetime.now().year
-        date_obj = datetime.strptime(f"{date_text}, {current_year}", "%b %d, %H:%M, %Y")
+        date_obj = date_obj.replace(year=current_year)
         if date_obj > datetime.now():
             date_obj = date_obj.replace(year=current_year - 1)
         return date_obj
@@ -130,9 +103,9 @@ def normalize_date(date_text):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_anime_news():
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)  # Start of today
     try:
-        response = session.get(BASE_URL, timeout=5)
+        response = session.get(BASE_URL, timeout=5)  # Reduced timeout from 10 to 5 seconds
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -155,6 +128,7 @@ def fetch_anime_news():
                 logging.info(f"Skipping article with invalid date: {title}")
                 continue
                 
+            # Skip if not from today, unless in debug mode
             if not DEBUG_MODE:
                 article_date = normalized_date.replace(hour=0, minute=0, second=0, microsecond=0)
                 if article_date != today:
@@ -188,15 +162,13 @@ def fetch_selected_articles(news_by_date):
         for news in news_list:
             if news['title'] not in posted_titles:
                 articles_to_fetch.append((news['article_url'], news['article']))
-            else:
-                logging.info(f"Skipping already posted article: {news['title']}")
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:  # Reduced from 5 to 3 workers
         futures = [executor.submit(fetch_article_details, url, article) for url, article in articles_to_fetch]
         
         for idx, future in enumerate(futures):
             try:
-                result = future.result(timeout=10)
+                result = future.result(timeout=10)  # Reduced from 15 to 10 seconds
                 article_url = articles_to_fetch[idx][0]
                 for news_list in news_by_date.values():
                     for news in news_list:
@@ -209,88 +181,76 @@ def fetch_selected_articles(news_by_date):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    bot = Bot(token=BOT_TOKEN)
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
+    # Build the caption with line gaps
     caption_parts = [f"✨ *{safe_title}* ✨"]
+    
+    # Add summary if available, with a line gap
     if safe_summary != "No summary available":
         caption_parts.append(f"\n\n📖 {safe_summary}")
+    
+    # Add caption in quote format, with a line gap
     caption_parts.append(f'\n\n🌟 [Powered By : `@TheAnimeTimes_acn`] 🌟')
     caption = "".join(caption_parts)
 
-    logging.info(f"Attempting to send message to chat_id: {CHAT_ID}")
-    logging.info(f"Using BOT_TOKEN: {BOT_TOKEN[:4]}... (partial for security)")
+    params = {
+        'chat_id': CHAT_ID,
+        'caption': caption,
+        'parse_mode': 'MarkdownV2'
+    }
 
     try:
         if image_url:
-            image_path = download_image(image_url)
-            if image_path and os.path.exists(image_path):
-                with open(image_path, "rb") as image_file:
-                    response = bot.send_photo(
-                        chat_id=CHAT_ID,
-                        photo=InputFile(image_file, filename="image.jpg"),
-                        caption=caption,
-                        parse_mode='MarkdownV2',
-                        disable_notification=False
-                    )
-                logging.info(f"Successfully sent photo to chat_id {CHAT_ID}. Message ID: {response.message_id}")
-            else:
-                logging.warning(f"Failed to download image for {title}. Posting text only.")
-                response = bot.send_message(
-                    chat_id=CHAT_ID,
-                    text=caption,
-                    parse_mode='MarkdownV2',
-                    disable_notification=False
-                )
-                logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Message ID: {response.message_id}")
-        else:
-            logging.info(f"No image for {title}. Posting text only.")
-            response = bot.send_message(
-                chat_id=CHAT_ID,
-                text=caption,
-                parse_mode='MarkdownV2',
-                disable_notification=False
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                data={'photo': image_url, **params},
+                timeout=5  # Reduced timeout
             )
-            logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Message ID: {response.message_id}")
+        else:
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={'text': caption, **params},
+                timeout=5  # Reduced timeout
+            )
 
+        response.raise_for_status()
         save_posted_title(title)
+        logging.info(f"Successfully posted: {title}")
         return True
-    except TelegramError as e:
-        logging.error(f"Telegram post failed for chat_id {CHAT_ID}: {e}")
+    except requests.RequestException as e:
+        logging.error(f"Telegram post failed: {e}")
         return False
-    except Exception as e:
-        logging.error(f"Unexpected error posting to chat_id {CHAT_ID}: {e}")
-        return False
-    finally:
-        if os.path.exists(os.path.join(TEMP_DIR, "image.jpg")):
-            os.remove(os.path.join(TEMP_DIR, "image.jpg"))
 
-def run_once():
-    """Run the bot once for GitHub Actions compatibility."""
-    logging.info("Starting Anime News Bot (single run)...")
-    try:
-        logging.info("Fetching news from ANN...")
-        news_by_date, article_list = fetch_anime_news()
-        logging.info(f"Found {len(article_list)} articles after filtering")
-        if not news_by_date:
-            logging.info("No articles from today found")
-            return
+def auto_mode():
+    logging.info("Starting Anime News Bot...")
+    while True:
+        try:
+            logging.info("Fetching news from ANN...")
+            news_by_date, article_list = fetch_anime_news()
+            logging.info(f"Found {len(article_list)} articles after filtering")
+            if not news_by_date:
+                logging.info("No articles from today found")
+                time.sleep(CHECK_INTERVAL)
+                continue
 
-        fetch_selected_articles(news_by_date)
-        new_posts = 0
+            fetch_selected_articles(news_by_date)
+            new_posts = 0
 
-        for date, news_list in sorted(news_by_date.items(), key=lambda x: x[0]):
-            for news in news_list:
-                if news['title'] not in load_posted_titles():
-                    if send_to_telegram(news['title'], news['image'], news['summary']):
-                        new_posts += 1
-                    time.sleep(1)  # Post faster
+            for date, news_list in sorted(news_by_date.items(), key=lambda x: x[0]):
+                for news in news_list:
+                    if news['title'] not in load_posted_titles():
+                        if send_to_telegram(news['title'], news['image'], news['summary']):
+                            new_posts += 1
+                        time.sleep(1)  # Reduced from 2 to 1 second to post faster
 
-        logging.info(f"Posted {new_posts} new articles")
-    except Exception as e:
-        logging.error(f"Main loop error: {e}")
-        raise
+            logging.info(f"Posted {new_posts} new articles")
+            time.sleep(CHECK_INTERVAL)
+
+        except Exception as e:
+            logging.error(f"Main loop error: {e}")
+            time.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
-    run_once()
+    auto_mode()
