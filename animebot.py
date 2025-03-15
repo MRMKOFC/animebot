@@ -25,7 +25,7 @@ logging.basicConfig(
 
 # Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID","-1002051610513")
+CHAT_ID = os.getenv("CHAT_ID")
 POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
@@ -218,6 +218,7 @@ def send_to_telegram(title, image_url, summary):
     caption = "".join(caption_parts)
 
     logging.info(f"Attempting to send message to chat_id: {CHAT_ID}")
+    logging.info(f"Using BOT_TOKEN: {BOT_TOKEN[:4]}... (partial for security)")  # Log partial token for verification
 
     try:
         if image_url:
@@ -231,7 +232,7 @@ def send_to_telegram(title, image_url, summary):
                         caption=caption,
                         parse_mode='MarkdownV2'
                     )
-                logging.info(f"Successfully posted image and text: {title}. Response: {response}")
+                logging.info(f"Successfully sent photo to chat_id {CHAT_ID}. Response: {response.message_id if response else 'No response'}")
             else:
                 logging.warning(f"Failed to download image for {title}. Posting text only.")
                 response = bot.send_message(
@@ -239,7 +240,7 @@ def send_to_telegram(title, image_url, summary):
                     text=caption,
                     parse_mode='MarkdownV2'
                 )
-                logging.info(f"Successfully posted text: {title}. Response: {response}")
+                logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Response: {response.message_id if response else 'No response'}")
         else:
             logging.info(f"No image for {title}. Posting text only.")
             response = bot.send_message(
@@ -247,12 +248,17 @@ def send_to_telegram(title, image_url, summary):
                 text=caption,
                 parse_mode='MarkdownV2'
             )
-            logging.info(f"Successfully posted text: {title}. Response: {response}")
+            logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Response: {response.message_id if response else 'No response'}")
 
+        if not response:
+            raise ValueError("Telegram API call returned no response")
         save_posted_title(title)
         return True
     except TelegramError as e:
-        logging.error(f"Telegram post failed: {e}")
+        logging.error(f"Telegram post failed for chat_id {CHAT_ID}: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error posting to chat_id {CHAT_ID}: {e}")
         return False
     finally:
         # Clean up temporary file if it exists
