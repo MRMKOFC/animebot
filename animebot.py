@@ -5,9 +5,9 @@ import logging
 import asyncio
 from tenacity import retry, stop_after_attempt, wait_fixed
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
-import telegram
 import requests
 import re
+from telegram import Bot
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -22,10 +22,7 @@ if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
     exit(1)
 
-# Initialize bot with the new Application (for python-telegram-bot v20.x)
-from telegram.ext import Application
-
-app = Application.builder().token(BOT_TOKEN).build()
+bot = Bot(token=BOT_TOKEN)
 
 async def load_posted_news():
     """Load previously posted news titles from file."""
@@ -153,8 +150,7 @@ async def post_to_telegram():
             # Send image with caption if available
             if image_url:
                 image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
-                # Use the new API for sending photos
-                await app.bot.send_photo(
+                await bot.send_photo(
                     chat_id=CHAT_ID,
                     photo=image_url,
                     caption=image_caption
@@ -166,10 +162,10 @@ async def post_to_telegram():
             text_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
             logging.info(f"Attempting to send message to Telegram: {message}")
             logging.info(f"Message length: {len(message)}, Bytes: {len(message.encode('utf-8'))}")
-            await app.bot.send_message(
+            await bot.send_message(
                 chat_id=CHAT_ID,
                 text=message,
-                caption=text_caption
+                # Note: caption is not applicable for send_message, removed
             )
             logging.info("News posted successfully.")
             # Save the posted news to avoid duplicates
