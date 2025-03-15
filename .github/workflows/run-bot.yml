@@ -28,4 +28,4 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Store your bot token in GitHub Secrets
           CHAT_ID: ${{ secrets.CHAT_ID }}      # Store your chat ID in GitHub Secrets
         run: |
-          python anime_news_bot.py
+          python anime_news_bot.py  # Ensure this matches the file name and location
