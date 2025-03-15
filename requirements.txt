@@ -1,6 +1,6 @@
 requests
 beautifulsoup4
 tenacity
-python-telegram-bot
+python-telegram-bot==20.8
 lxml
 playwright
