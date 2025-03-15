@@ -1,6 +1,5 @@
 import os
 import json
-import hashlib
 import logging
 import time
 import re
@@ -31,6 +30,11 @@ POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
 DEBUG_MODE = False  # Set to True to disable date filter for testing
+
+# Validate environment variables
+if not BOT_TOKEN or not CHAT_ID:
+    logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
+    exit(1)
 
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
@@ -112,9 +116,8 @@ def fetch_article_details(article_url, article):
 
 def normalize_date(date_text):
     try:
-        date_obj = datetime.strptime(date_text, "%b %d, %H:%M")
         current_year = datetime.now().year
-        date_obj = date_obj.replace(year=current_year)
+        date_obj = datetime.strptime(f"{date_text}, {current_year}", "%b %d, %H:%M, %Y")
         if date_obj > datetime.now():
             date_obj = date_obj.replace(year=current_year - 1)
         return date_obj
@@ -208,13 +211,13 @@ def send_to_telegram(title, image_url, summary):
     # Build the caption with line gaps
     caption_parts = [f"✨ *{safe_title}* ✨"]
     
-    # Add summary if available, with a line gap
     if safe_summary != "No summary available":
         caption_parts.append(f"\n\n📖 {safe_summary}")
     
-    # Add caption in quote format, with a line gap
     caption_parts.append(f'\n\n🌟 [Powered By : `@TheAnimeTimes_acn`] 🌟')
     caption = "".join(caption_parts)
+
+    logging.info(f"Attempting to send message to chat_id: {CHAT_ID}")
 
     try:
         if image_url:
@@ -222,27 +225,29 @@ def send_to_telegram(title, image_url, summary):
             image_path = download_image(image_url)
             if image_path and os.path.exists(image_path):
                 with open(image_path, "rb") as image_file:
-                    bot.send_photo(
+                    response = bot.send_photo(
                         chat_id=CHAT_ID,
                         photo=InputFile(image_file, filename="image.jpg"),
                         caption=caption,
                         parse_mode='MarkdownV2'
                     )
-                logging.info(f"Successfully posted image and text: {title}")
+                logging.info(f"Successfully posted image and text: {title}. Response: {response}")
             else:
                 logging.warning(f"Failed to download image for {title}. Posting text only.")
-                bot.send_message(
+                response = bot.send_message(
                     chat_id=CHAT_ID,
                     text=caption,
                     parse_mode='MarkdownV2'
                 )
+                logging.info(f"Successfully posted text: {title}. Response: {response}")
         else:
             logging.info(f"No image for {title}. Posting text only.")
-            bot.send_message(
+            response = bot.send_message(
                 chat_id=CHAT_ID,
                 text=caption,
                 parse_mode='MarkdownV2'
             )
+            logging.info(f"Successfully posted text: {title}. Response: {response}")
 
         save_posted_title(title)
         return True
