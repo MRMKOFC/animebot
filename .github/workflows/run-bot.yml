@@ -25,7 +25,7 @@ jobs:
 
       - name: Run Anime News Bot
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Corrected environment variable
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Store your bot token in GitHub Secrets
           CHAT_ID: ${{ secrets.CHAT_ID }}      # Store your chat ID in GitHub Secrets
         run: |
-          python anime_news_bot.py  # Corrected file name
+          python animebot.py  # Use the correct file name
