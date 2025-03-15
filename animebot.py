@@ -25,7 +25,7 @@ logging.basicConfig(
 
 # Configuration
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+CHAT_ID = os.getenv("CHAT_ID","-1002051610513")
 POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
