@@ -13,16 +13,32 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.x'
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Clear posted_titles.json (weekly)
+        if: github.event.schedule == '0 0 * * 0'  # Runs at 00:00 UTC on Sunday
+        run: |
+          echo "[]" > posted_titles.json
+          echo "Cleared posted_titles.json"
+
       - name: Run the bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python animebot.py
+
+      - name: Upload logs (optional)
+        if: always()  # Runs even if previous steps fail
+        uses: actions/upload-artifact@v3
+        with:
+          name: anime-news-bot-logs
+          path: anime_news_bot.log
