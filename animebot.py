@@ -191,7 +191,7 @@ def send_to_telegram(title, image_url, summary):
         caption_parts.append(f"\n\n📖 {safe_summary}")
     
     # Add caption in quote format, with a line gap
-    caption_parts.append(f'\n\n🌟Powered By:`@TheAnimeTimes_acn`🌟')
+    caption_parts.append(f'\n\n🌟Powered By:`@TheAnimeTimes_acn`)
     caption = "".join(caption_parts)
 
     params = {
