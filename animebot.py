@@ -3,12 +3,13 @@ import json
 import hashlib
 import logging
 import asyncio
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 import requests
 import re
 from telegram import Bot, InputFile
 from telegram.error import TelegramError
+from requests.exceptions import RequestException
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +20,6 @@ CHAT_ID = os.getenv("CHAT_ID")
 DATA_FILE = "posted_news.json"
 ANN_URL = "https://www.animenewsnetwork.com/news/"
 TEMP_IMAGE_PATH = "temp_image.jpg"
-FALLBACK_IMAGE_URL = "https://via.placeholder.com/300x200"
 
 if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
@@ -45,39 +45,27 @@ async def save_posted_news(title_hash):
     with open(DATA_FILE, "w") as f:
         json.dump(posted_news, f)
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_fixed(2),
+    retry=retry_if_exception_type(RequestException),
+    before_sleep=lambda retry_state: logging.info(f"Retrying image download (attempt {retry_state.attempt_number})...")
+)
 def download_image(image_url):
-    """Download the image to a local file, return the path or fallback if fails."""
+    """Download the original ANN image to a local file, return the path or None if fails."""
     temp_path = TEMP_IMAGE_PATH
     try:
         response = requests.get(image_url, timeout=5, allow_redirects=True)
-        if response.status_code != 200:
-            logging.warning(f"Failed to download image {image_url}: Status {response.status_code}")
-            # Download fallback image
-            response = requests.get(FALLBACK_IMAGE_URL, timeout=5, allow_redirects=True)
-            if response.status_code != 200:
-                logging.error(f"Failed to download fallback image {FALLBACK_IMAGE_URL}")
-                return None
+        response.raise_for_status()  # Raise an exception for bad status codes
         content_type = response.headers.get("Content-Type", "").lower()
         if "image" not in content_type:
             logging.warning(f"Invalid image content type {image_url}: {content_type}")
-            response = requests.get(FALLBACK_IMAGE_URL, timeout=5, allow_redirects=True)
-            if response.status_code != 200:
-                logging.error(f"Failed to download fallback image {FALLBACK_IMAGE_URL}")
-                return None
+            return None
         with open(temp_path, "wb") as f:
             f.write(response.content)
         return temp_path
     except Exception as e:
         logging.warning(f"Failed to download image {image_url}: {e}")
-        # Try fallback as a last resort
-        try:
-            response = requests.get(FALLBACK_IMAGE_URL, timeout=5, allow_redirects=True)
-            if response.status_code == 200:
-                with open(temp_path, "wb") as f:
-                    f.write(response.content)
-                return temp_path
-        except Exception as e:
-            logging.error(f"Failed to download fallback image {FALLBACK_IMAGE_URL}: {e}")
         return None
 
 def validate_image_url(image_url):
@@ -138,26 +126,27 @@ async def fetch_news():
             if title_hash in posted_news:
                 logging.info(f"News already posted: {title}")
                 return None
-            # Extract summary
-            summary_elements = await article.query_selector_all("p")
+            # Extract summary with improved selectors
             summary = "No summary available for this article. 📜"
-            for element in summary_elements:
-                text = await element.inner_text()
-                text = text.strip()
-                if text and "see the archives" not in text.lower() and len(text) > 20:
-                    summary = text[:200] + "..."
+            for selector in [".intro", "p", ".summary", ".content", "div[itemprop='articleBody']"]:
+                summary_elements = await article.query_selector_all(selector)
+                for element in summary_elements:
+                    text = await element.inner_text()
+                    text = text.strip()
+                    if text and "see the archives" not in text.lower() and len(text) > 20:
+                        summary = text[:200] + "..."
+                        break
+                if summary != "No summary available for this article. 📜":
                     break
             # Extract image URL
             img_element = await article.query_selector("img.thumbnail, img[src*=jpg], img[src*=png], img[src*=jpeg]")
             image_url = await img_element.get_attribute("src") if img_element else None
             if image_url and not image_url.startswith("http"):
                 image_url = f"https://www.animenewsnetwork.com{image_url}"
-            # Validate image URL, use fallback if invalid
-            if image_url and not validate_image_url(image_url):
-                logging.info(f"Original image URL invalid, using fallback: {image_url}")
-                image_url = FALLBACK_IMAGE_URL
-            if not image_url:
-                image_url = FALLBACK_IMAGE_URL
+            # Validate image URL, skip if invalid
+            if not image_url or not validate_image_url(image_url):
+                logging.warning(f"Invalid or no image URL found: {image_url}. Skipping image.")
+                image_url = None
             logging.info(f"Fetched news: Title={title}, Summary={summary}, Image URL={image_url}")
             return {"title": title, "summary": summary, "image_url": image_url, "title_hash": title_hash}
         except PlaywrightTimeoutError as e:
@@ -198,11 +187,10 @@ async def post_to_telegram():
             emoji_summary = add_emojis(summary, is_summary=True)
             message = f"{emoji_title}\n\n{emoji_summary}\n\n🌟 Powered by: @TheAnimeTimes_acn 🌟"
             
-            # Try to send image with caption
+            # Try to send image with caption only if image_url is valid
             image_posted = False
             if image_url:
                 try:
-                    # Download the image to a local file
                     image_path = download_image(image_url)
                     if image_path and os.path.exists(image_path):
                         with open(image_path, "rb") as f:
@@ -215,12 +203,12 @@ async def post_to_telegram():
                         logging.info(f"Sent image to Telegram with caption from {image_url}")
                         image_posted = True
                     else:
-                        logging.warning(f"Image file not found at {image_path}")
+                        logging.warning(f"Image file not found at {image_path}. Skipping image posting.")
                 except TelegramError as e:
-                    logging.warning(f"Failed to send image to Telegram: {e}. Proceeding with text-only message.")
+                    logging.warning(f"Failed to send image to Telegram: {e}. Skipping image posting.")
                     logging.debug(f"Telegram error details: {str(e)}")
 
-            # Send text message
+            # Send text message (always posted)
             logging.info(f"Attempting to send message to Telegram: {message}")
             logging.info(f"Message length: {len(message)}, Bytes: {len(message.encode('utf-8'))}")
             await bot.send_message(
