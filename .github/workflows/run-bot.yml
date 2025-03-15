@@ -40,6 +40,7 @@ jobs:
           python animebot.py
 
       - name: Save posted_titles.json to cache
+        if: always()  # Ensure this step runs even if the previous step fails
         uses: actions/cache@v3
         with:
           path: posted_titles.json
