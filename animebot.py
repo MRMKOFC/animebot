@@ -7,7 +7,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 import requests
 import re
-from telegram import Bot
+from telegram import Bot, InputFile
 from telegram.error import TelegramError
 
 # Setup logging
@@ -43,10 +43,27 @@ async def save_posted_news(title_hash):
     with open(DATA_FILE, "w") as f:
         json.dump(posted_news, f)
 
+def download_image(image_url, fallback_path="fallback.jpg"):
+    """Download the image to a local file, return the path or fallback path if fails."""
+    try:
+        response = requests.get(image_url, timeout=5, allow_redirects=True)
+        if response.status_code != 200:
+            logging.warning(f"Failed to download image {image_url}: Status {response.status_code}")
+            return fallback_path
+        content_type = response.headers.get("Content-Type", "").lower()
+        if "image" not in content_type:
+            logging.warning(f"Invalid image content type {image_url}: {content_type}")
+            return fallback_path
+        with open("temp_image.jpg", "wb") as f:
+            f.write(response.content)
+        return "temp_image.jpg"
+    except Exception as e:
+        logging.warning(f"Failed to download image {image_url}: {e}")
+        return fallback_path
+
 def validate_image_url(image_url):
     """Validate if the image URL is accessible and points to a valid image."""
     try:
-        # Follow redirects to get the final URL
         response = requests.get(image_url, timeout=5, allow_redirects=True, stream=True)
         if response.status_code != 200:
             logging.warning(f"Invalid image URL {image_url}: Status {response.status_code}")
@@ -55,9 +72,13 @@ def validate_image_url(image_url):
         if "image" not in content_type:
             logging.warning(f"Invalid image URL {image_url}: Content-Type {content_type} is not an image")
             return False
-        # Check file extension as an additional validation
         if not any(ext in image_url.lower() for ext in [".jpg", ".jpeg", ".png", ".gif"]):
             logging.warning(f"Invalid image URL {image_url}: No image file extension detected")
+            return False
+        response.raw.decode_content = True
+        chunk = response.raw.read(1024)
+        if not chunk or len(chunk) < 100:
+            logging.warning(f"Invalid image URL {image_url}: Insufficient data")
             return False
         return True
     except Exception as e:
@@ -92,7 +113,7 @@ async def fetch_news():
             # Extract and clean title
             title_element = await article.query_selector("h3, h2, h1")
             title = await title_element.inner_text() if title_element else "No Title"
-            title = re.sub(r'\s+', ' ', title.strip())  # Clean extra spaces
+            title = re.sub(r'\s+', ' ', title.strip())
             title_hash = hashlib.md5(title.encode()).hexdigest()
             posted_news = await load_posted_news()
             if title_hash in posted_news:
@@ -112,13 +133,12 @@ async def fetch_news():
             image_url = await img_element.get_attribute("src") if img_element else None
             if image_url and not image_url.startswith("http"):
                 image_url = f"https://www.animenewsnetwork.com{image_url}"
-            # Validate image URL, use fallback if invalid
+            # Validate image URL
             if image_url and not validate_image_url(image_url):
                 logging.info(f"Original image URL invalid, using fallback: {image_url}")
-                image_url = "https://placekitten.com/300/200"  # A reliable fallback image
-            # Fallback image if none found
+                image_url = "https://via.placeholder.com/300x200"
             if not image_url:
-                image_url = "https://placekitten.com/300/200"
+                image_url = "https://via.placeholder.com/300x200"
             logging.info(f"Fetched news: Title={title}, Summary={summary}, Image URL={image_url}")
             return {"title": title, "summary": summary, "image_url": image_url, "title_hash": title_hash}
         except PlaywrightTimeoutError as e:
@@ -141,7 +161,7 @@ def add_emojis(text, is_title=True, is_summary=False):
         return f"✨ {text} ✨"
     elif is_summary:
         return f"📖 {text} 📖"
-    else:  # caption
+    else:
         return f"🌟 {text} 🌟"
 
 async def post_to_telegram():
@@ -163,18 +183,22 @@ async def post_to_telegram():
             image_posted = False
             if image_url:
                 try:
-                    image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
-                    await bot.send_photo(
-                        chat_id=CHAT_ID,
-                        photo=image_url,
-                        caption=image_caption
-                    )
+                    # Download the image to ensure direct upload
+                    image_path = download_image(image_url, fallback_path="https://via.placeholder.com/300x200")
+                    with open(image_path, "rb") as f:
+                        image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
+                        await bot.send_photo(
+                            chat_id=CHAT_ID,
+                            photo=InputFile(f, filename="image.jpg"),
+                            caption=image_caption
+                        )
                     logging.info(f"Sent image to Telegram with caption: {image_url}")
                     image_posted = True
                 except TelegramError as e:
                     logging.warning(f"Failed to send image to Telegram: {e}. Proceeding with text-only message.")
+                    logging.debug(f"Telegram error details: {str(e)}")
 
-            # Send text message (include caption in the message text)
+            # Send text message
             logging.info(f"Attempting to send message to Telegram: {message}")
             logging.info(f"Message length: {len(message)}, Bytes: {len(message.encode('utf-8'))}")
             await bot.send_message(
@@ -186,7 +210,7 @@ async def post_to_telegram():
             await save_posted_news(title_hash)
         except Exception as e:
             logging.error(f"Error posting to Telegram: {e}")
-            raise  # Re-raise to ensure the workflow fails and logs the error
+            raise
     else:
         logging.warning("No new news to post")
 
