@@ -24,15 +24,17 @@ logging.basicConfig(
 )
 
 # Configuration
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "DEFAULT_NOT_SET")
+CHAT_ID = os.getenv("CHAT_ID", "DEFAULT_NOT_SET")
 POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
 DEBUG_MODE = False  # Set to True to disable date filter for testing
 
 # Validate environment variables
-if not BOT_TOKEN or not CHAT_ID:
+logging.info(f"Loaded BOT_TOKEN: {BOT_TOKEN[:4]}... (partial for security)")
+logging.info(f"Loaded CHAT_ID: {CHAT_ID}")
+if BOT_TOKEN == "DEFAULT_NOT_SET" or CHAT_ID == "DEFAULT_NOT_SET":
     logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
     exit(1)
 
@@ -65,6 +67,7 @@ def save_posted_title(title):
         titles.add(title)
         with open(POSTED_TITLES_FILE, "w", encoding="utf-8") as file:
             json.dump(list(titles), file)
+        logging.info(f"Saved title to {POSTED_TITLES_FILE}: {title}")
     except Exception as e:
         logging.error(f"Error saving posted title: {e}")
 
@@ -185,6 +188,8 @@ def fetch_selected_articles(news_by_date):
         for news in news_list:
             if news['title'] not in posted_titles:
                 articles_to_fetch.append((news['article_url'], news['article']))
+            else:
+                logging.info(f"Skipping already posted article: {news['title']}")
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = [executor.submit(fetch_article_details, url, article) for url, article in articles_to_fetch]
@@ -208,21 +213,17 @@ def send_to_telegram(title, image_url, summary):
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
-    # Build the caption with line gaps
     caption_parts = [f"✨ *{safe_title}* ✨"]
-    
     if safe_summary != "No summary available":
         caption_parts.append(f"\n\n📖 {safe_summary}")
-    
     caption_parts.append(f'\n\n🌟 [Powered By : `@TheAnimeTimes_acn`] 🌟')
     caption = "".join(caption_parts)
 
     logging.info(f"Attempting to send message to chat_id: {CHAT_ID}")
-    logging.info(f"Using BOT_TOKEN: {BOT_TOKEN[:4]}... (partial for security)")  # Log partial token for verification
+    logging.info(f"Using BOT_TOKEN: {BOT_TOKEN[:4]}... (partial for security)")
 
     try:
         if image_url:
-            # Download the image locally
             image_path = download_image(image_url)
             if image_path and os.path.exists(image_path):
                 with open(image_path, "rb") as image_file:
@@ -230,28 +231,29 @@ def send_to_telegram(title, image_url, summary):
                         chat_id=CHAT_ID,
                         photo=InputFile(image_file, filename="image.jpg"),
                         caption=caption,
-                        parse_mode='MarkdownV2'
+                        parse_mode='MarkdownV2',
+                        disable_notification=False
                     )
-                logging.info(f"Successfully sent photo to chat_id {CHAT_ID}. Response: {response.message_id if response else 'No response'}")
+                logging.info(f"Successfully sent photo to chat_id {CHAT_ID}. Message ID: {response.message_id}")
             else:
                 logging.warning(f"Failed to download image for {title}. Posting text only.")
                 response = bot.send_message(
                     chat_id=CHAT_ID,
                     text=caption,
-                    parse_mode='MarkdownV2'
+                    parse_mode='MarkdownV2',
+                    disable_notification=False
                 )
-                logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Response: {response.message_id if response else 'No response'}")
+                logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Message ID: {response.message_id}")
         else:
             logging.info(f"No image for {title}. Posting text only.")
             response = bot.send_message(
                 chat_id=CHAT_ID,
                 text=caption,
-                parse_mode='MarkdownV2'
+                parse_mode='MarkdownV2',
+                disable_notification=False
             )
-            logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Response: {response.message_id if response else 'No response'}")
+            logging.info(f"Successfully sent message to chat_id {CHAT_ID}. Message ID: {response.message_id}")
 
-        if not response:
-            raise ValueError("Telegram API call returned no response")
         save_posted_title(title)
         return True
     except TelegramError as e:
@@ -261,7 +263,6 @@ def send_to_telegram(title, image_url, summary):
         logging.error(f"Unexpected error posting to chat_id {CHAT_ID}: {e}")
         return False
     finally:
-        # Clean up temporary file if it exists
         if os.path.exists(os.path.join(TEMP_DIR, "image.jpg")):
             os.remove(os.path.join(TEMP_DIR, "image.jpg"))
 
