@@ -18,6 +18,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 DATA_FILE = "posted_news.json"
 ANN_URL = "https://www.animenewsnetwork.com/news/"
+TEMP_IMAGE_PATH = "temp_image.jpg"
+FALLBACK_IMAGE_URL = "https://via.placeholder.com/300x200"
 
 if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
@@ -43,23 +45,40 @@ async def save_posted_news(title_hash):
     with open(DATA_FILE, "w") as f:
         json.dump(posted_news, f)
 
-def download_image(image_url, fallback_path="fallback.jpg"):
-    """Download the image to a local file, return the path or fallback path if fails."""
+def download_image(image_url):
+    """Download the image to a local file, return the path or fallback if fails."""
+    temp_path = TEMP_IMAGE_PATH
     try:
         response = requests.get(image_url, timeout=5, allow_redirects=True)
         if response.status_code != 200:
             logging.warning(f"Failed to download image {image_url}: Status {response.status_code}")
-            return fallback_path
+            # Download fallback image
+            response = requests.get(FALLBACK_IMAGE_URL, timeout=5, allow_redirects=True)
+            if response.status_code != 200:
+                logging.error(f"Failed to download fallback image {FALLBACK_IMAGE_URL}")
+                return None
         content_type = response.headers.get("Content-Type", "").lower()
         if "image" not in content_type:
             logging.warning(f"Invalid image content type {image_url}: {content_type}")
-            return fallback_path
-        with open("temp_image.jpg", "wb") as f:
+            response = requests.get(FALLBACK_IMAGE_URL, timeout=5, allow_redirects=True)
+            if response.status_code != 200:
+                logging.error(f"Failed to download fallback image {FALLBACK_IMAGE_URL}")
+                return None
+        with open(temp_path, "wb") as f:
             f.write(response.content)
-        return "temp_image.jpg"
+        return temp_path
     except Exception as e:
         logging.warning(f"Failed to download image {image_url}: {e}")
-        return fallback_path
+        # Try fallback as a last resort
+        try:
+            response = requests.get(FALLBACK_IMAGE_URL, timeout=5, allow_redirects=True)
+            if response.status_code == 200:
+                with open(temp_path, "wb") as f:
+                    f.write(response.content)
+                return temp_path
+        except Exception as e:
+            logging.error(f"Failed to download fallback image {FALLBACK_IMAGE_URL}: {e}")
+        return None
 
 def validate_image_url(image_url):
     """Validate if the image URL is accessible and points to a valid image."""
@@ -133,12 +152,12 @@ async def fetch_news():
             image_url = await img_element.get_attribute("src") if img_element else None
             if image_url and not image_url.startswith("http"):
                 image_url = f"https://www.animenewsnetwork.com{image_url}"
-            # Validate image URL
+            # Validate image URL, use fallback if invalid
             if image_url and not validate_image_url(image_url):
                 logging.info(f"Original image URL invalid, using fallback: {image_url}")
-                image_url = "https://via.placeholder.com/300x200"
+                image_url = FALLBACK_IMAGE_URL
             if not image_url:
-                image_url = "https://via.placeholder.com/300x200"
+                image_url = FALLBACK_IMAGE_URL
             logging.info(f"Fetched news: Title={title}, Summary={summary}, Image URL={image_url}")
             return {"title": title, "summary": summary, "image_url": image_url, "title_hash": title_hash}
         except PlaywrightTimeoutError as e:
@@ -183,17 +202,20 @@ async def post_to_telegram():
             image_posted = False
             if image_url:
                 try:
-                    # Download the image to ensure direct upload
-                    image_path = download_image(image_url, fallback_path="https://via.placeholder.com/300x200")
-                    with open(image_path, "rb") as f:
-                        image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
-                        await bot.send_photo(
-                            chat_id=CHAT_ID,
-                            photo=InputFile(f, filename="image.jpg"),
-                            caption=image_caption
-                        )
-                    logging.info(f"Sent image to Telegram with caption: {image_url}")
-                    image_posted = True
+                    # Download the image to a local file
+                    image_path = download_image(image_url)
+                    if image_path and os.path.exists(image_path):
+                        with open(image_path, "rb") as f:
+                            image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
+                            await bot.send_photo(
+                                chat_id=CHAT_ID,
+                                photo=InputFile(f, filename="image.jpg"),
+                                caption=image_caption
+                            )
+                        logging.info(f"Sent image to Telegram with caption from {image_url}")
+                        image_posted = True
+                    else:
+                        logging.warning(f"Image file not found at {image_path}")
                 except TelegramError as e:
                     logging.warning(f"Failed to send image to Telegram: {e}. Proceeding with text-only message.")
                     logging.debug(f"Telegram error details: {str(e)}")
@@ -206,10 +228,16 @@ async def post_to_telegram():
                 text=message,
             )
             logging.info("News posted successfully.")
+            # Clean up temporary file if it exists
+            if os.path.exists(TEMP_IMAGE_PATH):
+                os.remove(TEMP_IMAGE_PATH)
             # Save the posted news to avoid duplicates
             await save_posted_news(title_hash)
         except Exception as e:
             logging.error(f"Error posting to Telegram: {e}")
+            # Clean up temporary file if it exists
+            if os.path.exists(TEMP_IMAGE_PATH):
+                os.remove(TEMP_IMAGE_PATH)
             raise
     else:
         logging.warning("No new news to post")
