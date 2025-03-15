@@ -1,6 +1,3 @@
-requests
-beautifulsoup4
-tenacity
-python-telegram-bot==13.15
-lxml
-six
+requests==2.31.0
+beautifulsoup4==4.12.2
+tenacity==8.2.3
