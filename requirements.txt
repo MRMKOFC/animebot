@@ -3,4 +3,4 @@ beautifulsoup4
 tenacity
 python-telegram-bot==20.8
 lxml
-playwright
+
