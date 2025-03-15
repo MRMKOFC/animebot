@@ -45,11 +45,23 @@ async def fetch_news():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         page = await browser.new_page()
+        # Set a realistic user-agent to avoid bot detection
+        await page.set_extra_http_headers({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9"
+        })
         try:
-            await page.goto(ANN_URL, wait_until="networkidle", timeout=60000)  # Increased to 60s
-            logging.info(f"Successfully loaded ANN page: {ANN_URL}")
+            # First attempt with domcontentloaded
+            try:
+                await page.goto(ANN_URL, wait_until="domcontentloaded", timeout=60000)
+                logging.info(f"Successfully loaded ANN page (DOM): {ANN_URL}")
+            except PlaywrightTimeoutError:
+                logging.warning("DOM content load timed out, trying networkidle...")
+                await page.goto(ANN_URL, wait_until="networkidle", timeout=90000)  # Increased to 90s
+                logging.info(f"Successfully loaded ANN page (networkidle): {ANN_URL}")
+            
             # Wait for a news article to load (updated selectors)
-            await page.wait_for_selector(".wrap, .news-item, .herald.box.news, article, .mainfeed-day", state="visible", timeout=30000)  # Increased to 30s
+            await page.wait_for_selector(".wrap, .news-item, .herald.box.news, article, .mainfeed-day", state="visible", timeout=30000)
             content = await page.content()
             logging.debug(f"Page content: {content[:1000]}")  # Log more content for debugging
             # Extract the first article
