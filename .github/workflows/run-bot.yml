@@ -1,15 +1,14 @@
-name: Run Anime News Bot
+name: Anime News Bot
 
 on:
-  push:
-    branches:
-      - main
   schedule:
     - cron: '*/30 * * * *'  # Runs every 30 minutes
+  workflow_dispatch:  # Allows manual triggering
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -17,33 +16,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.12'  # Use Python 3.12 to include imghdr
+          python-version: '3.9'  # Use the Python version your script requires
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt --no-cache-dir  # Force fresh install
-          pip list  # Debug: List installed packages to verify python-telegram-bot and six
+          pip install requests beautifulsoup4 tenacity
 
-      - name: Clear posted_titles.json (weekly)
-        if: github.event.schedule == '0 0 * * 0'  # Runs at 00:00 UTC on Sunday
-        run: |
-          echo "[]" > posted_titles.json
-          echo "Cleared posted_titles.json"
-
-      - name: Run the bot
+      - name: Run Anime News Bot
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Store your bot token in GitHub Secrets
+          CHAT_ID: ${{ secrets.CHAT_ID }}      # Store your chat ID in GitHub Secrets
         run: |
-          python animebot.py 2>&1 | tee -a anime_news_bot.log
-        continue-on-error: true  # Allow the job to continue for debugging
-
-      - name: Check log file
-        run: |
-          if [ ! -f anime_news_bot.log ]; then
-            echo "Log file not found, creating empty log"
-            touch anime_news_bot.log
-            echo "No output from script" > anime_news_bot.log
-          fi
-          cat anime_news_bot.log
+          python anime_news_bot.py
