@@ -23,15 +23,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Restore posted_titles.json from cache
-        id: cache-posted-titles
-        uses: actions/cache@v3
-        with:
-          path: posted_titles.json
-          key: posted-titles-${{ runner.os }}-${{ hashFiles('posted_titles.json') }}
-          restore-keys: |
-            posted-titles-${{ runner.os }}-
-
       - name: Run Anime News Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Store your bot token in GitHub Secrets
@@ -39,9 +30,10 @@ jobs:
         run: |
           python animebot.py
 
-      - name: Save posted_titles.json to cache
-        if: always()  # Ensure this step runs even if the previous step fails
-        uses: actions/cache@v3
-        with:
-          path: posted_titles.json
-          key: posted-titles-${{ runner.os }}-${{ hashFiles('posted_titles.json') }}
+      - name: Commit and push posted_titles.json
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add posted_titles.json
+          git commit -m "Update posted_titles.json"
+          git push
