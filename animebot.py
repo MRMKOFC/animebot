@@ -6,6 +6,8 @@ import asyncio
 from tenacity import retry, stop_after_attempt, wait_fixed
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
 import telegram
+import requests
+import re
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +22,10 @@ if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID environment variables not set. Exiting.")
     exit(1)
 
-bot = telegram.Bot(token=BOT_TOKEN)
+# Initialize bot with the new Application (for python-telegram-bot v20.x)
+from telegram.ext import Application
+
+app = Application.builder().token(BOT_TOKEN).build()
 
 async def load_posted_news():
     """Load previously posted news titles from file."""
@@ -40,45 +45,53 @@ async def save_posted_news(title_hash):
     with open(DATA_FILE, "w") as f:
         json.dump(posted_news, f)
 
+def validate_image_url(image_url):
+    """Validate if the image URL is accessible."""
+    try:
+        response = requests.head(image_url, timeout=5, allow_redirects=True)
+        if response.status_code == 200 and "image" in response.headers.get("Content-Type", "").lower():
+            return True
+        logging.warning(f"Invalid image URL {image_url}: Status {response.status_code}")
+        return False
+    except Exception as e:
+        logging.warning(f"Failed to validate image URL {image_url}: {e}")
+        return False
+
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 async def fetch_news():
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         page = await browser.new_page()
-        # Set a realistic user-agent to avoid bot detection
         await page.set_extra_http_headers({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9"
         })
         try:
-            # First attempt with domcontentloaded
             try:
                 await page.goto(ANN_URL, wait_until="domcontentloaded", timeout=60000)
                 logging.info(f"Successfully loaded ANN page (DOM): {ANN_URL}")
             except PlaywrightTimeoutError:
                 logging.warning("DOM content load timed out, trying networkidle...")
-                await page.goto(ANN_URL, wait_until="networkidle", timeout=90000)  # Increased to 90s
+                await page.goto(ANN_URL, wait_until="networkidle", timeout=90000)
                 logging.info(f"Successfully loaded ANN page (networkidle): {ANN_URL}")
             
-            # Wait for a news article to load (updated selectors)
             await page.wait_for_selector(".wrap, .news-item, .herald.box.news, article, .mainfeed-day", state="visible", timeout=30000)
             content = await page.content()
-            logging.debug(f"Page content: {content[:1000]}")  # Log more content for debugging
-            # Extract the first article
+            logging.debug(f"Page content: {content[:1000]}")
             article = await page.query_selector(".wrap, .news-item, .herald.box.news, article, .mainfeed-day")
             if not article:
                 logging.warning("No article found on the page using any selector.")
                 return None
-            # Extract title
+            # Extract and clean title
             title_element = await article.query_selector("h3, h2, h1")
             title = await title_element.inner_text() if title_element else "No Title"
-            title = title.strip()
+            title = re.sub(r'\s+', ' ', title.strip())  # Clean extra spaces
             title_hash = hashlib.md5(title.encode()).hexdigest()
             posted_news = await load_posted_news()
             if title_hash in posted_news:
                 logging.info(f"News already posted: {title}")
                 return None
-            # Extract summary (first meaningful paragraph)
+            # Extract summary
             summary_elements = await article.query_selector_all("p")
             summary = "No summary available for this article. 📜"
             for element in summary_elements:
@@ -92,6 +105,9 @@ async def fetch_news():
             image_url = await img_element.get_attribute("src") if img_element else None
             if image_url and not image_url.startswith("http"):
                 image_url = f"https://www.animenewsnetwork.com{image_url}"
+            # Validate image URL, use fallback if invalid
+            if image_url and not validate_image_url(image_url):
+                image_url = "https://via.placeholder.com/300x200?text=Anime+News+🌟"
             # Fallback image if none found
             if not image_url:
                 image_url = "https://via.placeholder.com/300x200?text=Anime+News+🌟"
@@ -137,7 +153,12 @@ async def post_to_telegram():
             # Send image with caption if available
             if image_url:
                 image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
-                await bot.send_photo(chat_id=CHAT_ID, photo=image_url, caption=image_caption)
+                # Use the new API for sending photos
+                await app.bot.send_photo(
+                    chat_id=CHAT_ID,
+                    photo=image_url,
+                    caption=image_caption
+                )
                 logging.info(f"Sent image to Telegram with caption: {image_url}")
             
             # Send text message with caption for all posts
@@ -145,13 +166,17 @@ async def post_to_telegram():
             text_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
             logging.info(f"Attempting to send message to Telegram: {message}")
             logging.info(f"Message length: {len(message)}, Bytes: {len(message.encode('utf-8'))}")
-            response = await bot.send_message(chat_id=CHAT_ID, text=message, caption=text_caption)
-            logging.info(f"News posted successfully. Response: {response}")
+            await app.bot.send_message(
+                chat_id=CHAT_ID,
+                text=message,
+                caption=text_caption
+            )
+            logging.info("News posted successfully.")
             # Save the posted news to avoid duplicates
             await save_posted_news(title_hash)
         except Exception as e:
             logging.error(f"Error posting to Telegram: {e}")
-            logging.error(f"Message that failed: {message}")
+            raise  # Re-raise to ensure the workflow fails and logs the error
     else:
         logging.warning("No new news to post")
 
