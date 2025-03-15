@@ -32,6 +32,12 @@ jobs:
         run: |
           python animebot.py
 
+      - name: Ensure posted_titles.json exists
+        run: |
+          if [ ! -f posted_titles.json ]; then
+            echo "[]" > posted_titles.json  # Create an empty JSON array if the file doesn't exist
+          fi
+
       - name: Commit and push posted_titles.json
         run: |
           git config --global user.name "GitHub Actions"
