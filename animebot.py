@@ -8,6 +8,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 import requests
 import re
 from telegram import Bot
+from telegram.error import TelegramError
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -43,13 +44,22 @@ async def save_posted_news(title_hash):
         json.dump(posted_news, f)
 
 def validate_image_url(image_url):
-    """Validate if the image URL is accessible."""
+    """Validate if the image URL is accessible and points to a valid image."""
     try:
-        response = requests.head(image_url, timeout=5, allow_redirects=True)
-        if response.status_code == 200 and "image" in response.headers.get("Content-Type", "").lower():
-            return True
-        logging.warning(f"Invalid image URL {image_url}: Status {response.status_code}")
-        return False
+        # Follow redirects to get the final URL
+        response = requests.get(image_url, timeout=5, allow_redirects=True, stream=True)
+        if response.status_code != 200:
+            logging.warning(f"Invalid image URL {image_url}: Status {response.status_code}")
+            return False
+        content_type = response.headers.get("Content-Type", "").lower()
+        if "image" not in content_type:
+            logging.warning(f"Invalid image URL {image_url}: Content-Type {content_type} is not an image")
+            return False
+        # Check file extension as an additional validation
+        if not any(ext in image_url.lower() for ext in [".jpg", ".jpeg", ".png", ".gif"]):
+            logging.warning(f"Invalid image URL {image_url}: No image file extension detected")
+            return False
+        return True
     except Exception as e:
         logging.warning(f"Failed to validate image URL {image_url}: {e}")
         return False
@@ -104,10 +114,11 @@ async def fetch_news():
                 image_url = f"https://www.animenewsnetwork.com{image_url}"
             # Validate image URL, use fallback if invalid
             if image_url and not validate_image_url(image_url):
-                image_url = "https://via.placeholder.com/300x200?text=Anime+News+🌟"
+                logging.info(f"Original image URL invalid, using fallback: {image_url}")
+                image_url = "https://placekitten.com/300/200"  # A reliable fallback image
             # Fallback image if none found
             if not image_url:
-                image_url = "https://via.placeholder.com/300x200?text=Anime+News+🌟"
+                image_url = "https://placekitten.com/300/200"
             logging.info(f"Fetched news: Title={title}, Summary={summary}, Image URL={image_url}")
             return {"title": title, "summary": summary, "image_url": image_url, "title_hash": title_hash}
         except PlaywrightTimeoutError as e:
@@ -146,26 +157,29 @@ async def post_to_telegram():
             # Add emojis to title and summary
             emoji_title = add_emojis(title, is_title=True)
             emoji_summary = add_emojis(summary, is_summary=True)
+            message = f"{emoji_title}\n\n{emoji_summary}\n\n🌟 Powered by: @TheAnimeTimes_acn 🌟"
             
-            # Send image with caption if available
+            # Try to send image with caption
+            image_posted = False
             if image_url:
-                image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
-                await bot.send_photo(
-                    chat_id=CHAT_ID,
-                    photo=image_url,
-                    caption=image_caption
-                )
-                logging.info(f"Sent image to Telegram with caption: {image_url}")
-            
-            # Send text message with caption for all posts
-            message = f"{emoji_title}\n\n{emoji_summary}"
-            text_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
+                try:
+                    image_caption = add_emojis("Powered by: @TheAnimeTimes_acn", is_summary=False)
+                    await bot.send_photo(
+                        chat_id=CHAT_ID,
+                        photo=image_url,
+                        caption=image_caption
+                    )
+                    logging.info(f"Sent image to Telegram with caption: {image_url}")
+                    image_posted = True
+                except TelegramError as e:
+                    logging.warning(f"Failed to send image to Telegram: {e}. Proceeding with text-only message.")
+
+            # Send text message (include caption in the message text)
             logging.info(f"Attempting to send message to Telegram: {message}")
             logging.info(f"Message length: {len(message)}, Bytes: {len(message.encode('utf-8'))}")
             await bot.send_message(
                 chat_id=CHAT_ID,
                 text=message,
-                # Note: caption is not applicable for send_message, removed
             )
             logging.info("News posted successfully.")
             # Save the posted news to avoid duplicates
