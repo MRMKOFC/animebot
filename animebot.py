@@ -26,7 +26,7 @@ CHAT_ID = os.getenv("CHAT_ID")      # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
-DEBUG_MODE = False  # Set to True to disable date filter for testing
+DEBUG_MODE = True  # Set to True to disable date filter for testing
 
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
