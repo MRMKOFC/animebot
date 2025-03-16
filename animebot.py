@@ -27,7 +27,6 @@ POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
 DEBUG_MODE = False  # Set to True to disable date filter for testing
-CHECK_INTERVAL = 21600  # 21600 seconds = 6 hours
 TIMEZONE_OFFSET = -7  # Default to PDT (UTC-7), adjust for ANN's time zone (e.g., -5 for EST)
 
 if not os.path.exists(TEMP_DIR):
@@ -92,13 +91,25 @@ def fetch_article_details(article_url, article):
 
 def normalize_date(date_text):
     try:
-        # Parse the date (e.g., "Mar 16, 06:11")
+        # Parse the date (e.g., "Mar 16, 06:11") and make it offset-aware
+        tz = timezone(timedelta(hours=TIMEZONE_OFFSET))
+        # Parse the date without a year first
         date_obj = datetime.strptime(date_text, "%b %d, %H:%M")
-        current_year = datetime.now(timezone(timedelta(hours=TIMEZONE_OFFSET))).year
-        date_obj = date_obj.replace(year=current_year)
+        # Get the current year from an offset-aware datetime
+        current_year = datetime.now(tz).year
+        # Combine the parsed date with the current year and apply timezone
+        date_obj = datetime(
+            year=current_year,
+            month=date_obj.month,
+            day=date_obj.day,
+            hour=date_obj.hour,
+            minute=date_obj.minute,
+            tzinfo=tz
+        )
         
         # If the date is in the future (e.g., due to time zone differences), adjust the year
-        if date_obj > datetime.now(timezone(timedelta(hours=TIMEZONE_OFFSET))):
+        now = datetime.now(tz)
+        if date_obj > now:
             date_obj = date_obj.replace(year=current_year - 1)
         
         logging.info(f"Parsed date: {date_obj} (from input: {date_text})")
@@ -261,12 +272,5 @@ def run_once():
     except Exception as e:
         logging.error(f"Main loop error: {e}")
 
-def run_continuously():
-    logging.info(f"Starting Anime News Bot in continuous mode with interval {CHECK_INTERVAL} seconds...")
-    while True:
-        run_once()
-        logging.info(f"Sleeping for {CHECK_INTERVAL} seconds...")
-        time.sleep(CHECK_INTERVAL)
-
 if __name__ == "__main__":
-    run_continuously()  # Run the bot every 6 hours by default
+    run_once()  # Run the bot once
