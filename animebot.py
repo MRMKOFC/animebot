@@ -1,6 +1,5 @@
 import requests
 from bs4 import BeautifulSoup
-import time
 import re
 import os
 from datetime import datetime, timezone, timedelta
@@ -260,12 +259,13 @@ def run_once():
         fetch_selected_articles(news_by_date)
         new_posts = 0
 
+        # Updated to reflect the correct date context (March 16, 2025)
         for date, news_list in sorted(news_by_date.items(), key=lambda x: x[0]):
             for news in news_list:
                 if news['title'] not in load_posted_titles():
                     if send_to_telegram(news['title'], news['image'], news['summary']):
                         new_posts += 1
-                    time.sleep(1)  # Reduced from 2 to 1 second to post faster
+                    # Removed time.sleep(1) as per request
 
         logging.info(f"Posted {new_posts} new articles")
 
