@@ -152,6 +152,8 @@ def fetch_anime_news():
             })
 
         logging.info(f"Total articles on ANN homepage: {all_articles}")
+        logging.info(f"Articles after filtering: {len(article_list)}")
+        logging.info(f"Today's date: {today}")
         return news_by_date, article_list
 
     except requests.RequestException as e:
