@@ -26,7 +26,7 @@ CHAT_ID = os.getenv("CHAT_ID")      # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
-DEBUG_MODE = True  # Set to True to disable date filter for testing
+DEBUG_MODE = False  # Set to True to disable date filter for testing
 
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
@@ -90,11 +90,16 @@ def fetch_article_details(article_url, article):
 
 def normalize_date(date_text):
     try:
+        # Parse the date (e.g., "Mar 16, 06:11")
         date_obj = datetime.strptime(date_text, "%b %d, %H:%M")
         current_year = datetime.now().year
         date_obj = date_obj.replace(year=current_year)
+        
+        # If the date is in the future (e.g., due to time zone differences), adjust the year
         if date_obj > datetime.now():
             date_obj = date_obj.replace(year=current_year - 1)
+        
+        logging.info(f"Parsed date: {date_obj} (from input: {date_text})")
         return date_obj
     except Exception as e:
         logging.error(f"Error normalizing date: {e}")
