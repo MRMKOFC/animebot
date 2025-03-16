@@ -3,7 +3,7 @@ from bs4 import BeautifulSoup
 import time
 import re
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +27,8 @@ POSTED_TITLES_FILE = "posted_titles.json"
 TEMP_DIR = "temp_media"
 BASE_URL = "https://www.animenewsnetwork.com"
 DEBUG_MODE = False  # Set to True to disable date filter for testing
+CHECK_INTERVAL = 21600  # 21600 seconds = 6 hours
+TIMEZONE_OFFSET = -7  # Default to PDT (UTC-7), adjust for ANN's time zone (e.g., -5 for EST)
 
 if not os.path.exists(TEMP_DIR):
     os.makedirs(TEMP_DIR)
@@ -92,11 +94,11 @@ def normalize_date(date_text):
     try:
         # Parse the date (e.g., "Mar 16, 06:11")
         date_obj = datetime.strptime(date_text, "%b %d, %H:%M")
-        current_year = datetime.now().year
+        current_year = datetime.now(timezone(timedelta(hours=TIMEZONE_OFFSET))).year
         date_obj = date_obj.replace(year=current_year)
         
         # If the date is in the future (e.g., due to time zone differences), adjust the year
-        if date_obj > datetime.now():
+        if date_obj > datetime.now(timezone(timedelta(hours=TIMEZONE_OFFSET))):
             date_obj = date_obj.replace(year=current_year - 1)
         
         logging.info(f"Parsed date: {date_obj} (from input: {date_text})")
@@ -107,7 +109,10 @@ def normalize_date(date_text):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_anime_news():
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)  # Start of today
+    now = datetime.now(timezone(timedelta(hours=TIMEZONE_OFFSET)))
+    one_day_ago = now - timedelta(days=1)  # Look back 24 hours
+    logging.info(f"Server time: {now}, Looking for articles from: {one_day_ago} to {now}")
+    
     try:
         response = session.get(BASE_URL, timeout=5)
         response.raise_for_status()
@@ -132,13 +137,15 @@ def fetch_anime_news():
                 logging.info(f"Skipping article with invalid date: {title}")
                 continue
                 
-            # Skip if not from today, unless in debug mode
+            # Check if the article is within the last 24 hours
             if not DEBUG_MODE:
-                article_date = normalized_date.replace(hour=0, minute=0, second=0, microsecond=0)
-                if article_date != today:
-                    logging.info(f"Skipping non-today article: {date_text} - {title}")
+                if normalized_date < one_day_ago:
+                    logging.info(f"Skipping article older than 24 hours: {date_text} - {title}")
                     continue
-                
+                article_date = normalized_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                logging.info(f"Article date: {article_date}, Today's date: {today}, Matches today: {article_date == today}")
+            
             link = title_tag.find('a')
             article_url = f"{BASE_URL}{link['href']}" if link else None
             
@@ -153,7 +160,7 @@ def fetch_anime_news():
 
         logging.info(f"Total articles on ANN homepage: {all_articles}")
         logging.info(f"Articles after filtering: {len(article_list)}")
-        logging.info(f"Today's date: {today}")
+        logging.info(f"Current time: {now}")
         return news_by_date, article_list
 
     except requests.RequestException as e:
@@ -236,7 +243,7 @@ def run_once():
         news_by_date, article_list = fetch_anime_news()
         logging.info(f"Found {len(article_list)} articles after filtering")
         if not news_by_date:
-            logging.info("No articles from today found")
+            logging.info("No articles from the last 24 hours found")
             return
 
         fetch_selected_articles(news_by_date)
@@ -254,5 +261,12 @@ def run_once():
     except Exception as e:
         logging.error(f"Main loop error: {e}")
 
+def run_continuously():
+    logging.info(f"Starting Anime News Bot in continuous mode with interval {CHECK_INTERVAL} seconds...")
+    while True:
+        run_once()
+        logging.info(f"Sleeping for {CHECK_INTERVAL} seconds...")
+        time.sleep(CHECK_INTERVAL)
+
 if __name__ == "__main__":
-    run_once()  # Run the bot once
+    run_continuously()  # Run the bot every 6 hours by default
