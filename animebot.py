@@ -1,74 +1,98 @@
-import os
 import requests
-import json
-from datetime import datetime
 from bs4 import BeautifulSoup
+from datetime import datetime
+import json
+import os
 
-# Load secrets from environment variables
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# Telegram Bot Token & Chat ID
+BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
 
-NEWS_URL = "https://www.animenewsnetwork.com/"
-TELEGRAM_SEND_PHOTO_URL = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+# ANN Website URL
+ANN_URL = "https://www.animenewsnetwork.com/"
 
-# Fetch today's news
-def fetch_news():
-    response = requests.get(NEWS_URL)
-    if response.status_code != 200:
-        print("❌ Failed to fetch news")
-        return []
-    
-    soup = BeautifulSoup(response.text, "html.parser")
-    articles = soup.find_all("div", class_="herald box news")
-    
-    today = datetime.now().strftime("%b %d")  # Example: "Mar 16"
-    news_list = []
+# JSON file to track posted titles
+POSTED_TITLES_FILE = "posted_titles.json"
 
-    for article in articles:
-        date_element = article.find("time")
-        if date_element:
-            article_date = date_element.text.strip()
-            if today not in article_date:  # Skip articles not from today
-                continue
+# Ensure JSON file exists
+if not os.path.exists(POSTED_TITLES_FILE):
+    with open(POSTED_TITLES_FILE, "w") as f:
+        json.dump([], f)
 
-        title_element = article.find("h3")
-        summary_element = article.find("div", class_="herald box summary")
-        image_element = article.find("img")
+# Load previously posted titles
+with open(POSTED_TITLES_FILE, "r") as f:
+    posted_titles = json.load(f)
 
-        if title_element and summary_element and image_element:
-            title = title_element.text.strip()
-            summary = summary_element.text.strip()
-            image_url = image_element["src"]
-            
-            news_list.append({
-                "title": title,
-                "summary": summary,
-                "image_url": image_url
-            })
+# Get today's date in ANN format
+today = datetime.now().strftime("%B %d")  # Example: "March 16"
 
-    return news_list
+# Fetch the webpage
+response = requests.get(ANN_URL)
+soup = BeautifulSoup(response.text, "html.parser")
 
-# Send news to Telegram
-def send_news_to_telegram(news_list):
-    for item in news_list:
-        caption = f"📰 **{item['title']}**\n\n📌 {item['summary']}\n\n⚡ Powered by: @TheAnimeTimes_acn"
+# Find articles
+articles = soup.find_all("div", class_="herald box news")  # Update selector if needed
+
+new_articles = []
+
+for article in articles:
+    # Extract title
+    title_element = article.find("h3")
+    title = title_element.text.strip() if title_element else "No Title"
+
+    # Extract summary
+    summary_element = article.find("div", class_="preview")
+    summary = summary_element.text.strip() if summary_element else "No summary available."
+
+    # Extract image (if available)
+    img_element = article.find("img")
+    img_url = img_element["src"] if img_element else None
+
+    # Extract date
+    date_element = article.find("time")
+    article_date = date_element.text.strip() if date_element else "Unknown Date"
+
+    # Debug: Print extracted date
+    print(f"Extracted Date: {article_date} | Today's Date: {today}")
+
+    # Check if the article is from today and not posted before
+    if today in article_date and title not in posted_titles:
+        new_articles.append(title)
         
-        payload = {
-            "chat_id": CHAT_ID,
-            "photo": item["image_url"],
-            "caption": caption,
-            "parse_mode": "Markdown"
-        }
+        # Format message with emojis
+        message = f"📰 *{title}*\n📅 {article_date}\n\n📖 {summary}\n🔗 [Read more]({ANN_URL})"
 
-        response = requests.post(TELEGRAM_SEND_PHOTO_URL, data=payload)
-        if response.status_code != 200:
-            print(f"❌ Telegram post failed: {response.text}")
+        # Send message to Telegram
+        if img_url:
+            telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+            payload = {
+                "chat_id": CHAT_ID,
+                "photo": img_url,
+                "caption": message,
+                "parse_mode": "Markdown"
+            }
+        else:
+            telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": CHAT_ID,
+                "text": message,
+                "parse_mode": "Markdown"
+            }
 
-# Main function
-if __name__ == "__main__":
-    news_today = fetch_news()
-    if news_today:
-        send_news_to_telegram(news_today)
-        print(f"✅ Posted {len(news_today)} articles.")
-    else:
-        print("⚠️ No new articles found for today.")
+        response = requests.post(telegram_url, data=payload)
+
+        # Debugging response
+        print(f"Telegram Response: {response.json()}")
+
+        # Add title to posted list
+        posted_titles.append(title)
+
+# Save updated posted titles
+with open(POSTED_TITLES_FILE, "w") as f:
+    json.dump(posted_titles, f)
+
+# Final log message
+if new_articles:
+    print(f"✅ Posted {len(new_articles)} new articles.")
+else:
+    print("⚠️ No new articles found for today.")
