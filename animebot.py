@@ -4,8 +4,6 @@ import os
 import json
 import logging
 from datetime import datetime, timezone, timedelta
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 
 # Logging setup
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -27,7 +25,7 @@ def load_posted_titles():
     except FileNotFoundError:
         return set()
 
-# Save newly posted title
+# Save newly posted titles
 def save_posted_title(title):
     titles = load_posted_titles()
     titles.add(title)
@@ -40,20 +38,27 @@ def fetch_ann_news():
     soup = BeautifulSoup(response.text, 'html.parser')
 
     news_list = []
-    for article in soup.select(".herald.box.news"):  # Fix class selector
+    for article in soup.select(".herald.box.news.t-news"):  # Corrected selector
         title_tag = article.select_one("h3 a")
-        image_tag = article.select_one("img")
+        image_tag = article.select_one("div.thumbnail.lazyload")
 
         if title_tag:
             title = title_tag.text.strip()
             link = title_tag["href"]
             if not link.startswith("http"):
                 link = BASE_URL + link
-            image = image_tag["src"] if image_tag else None
+
+            # Extract image correctly
+            image = image_tag["data-src"] if image_tag and image_tag.has_attr("data-src") else None
 
             news_list.append({"title": title, "link": link, "image": image})
 
     return news_list
+
+# Escape Markdown for Telegram
+def escape_markdown(text):
+    escape_chars = "_*[]()~`>#+-=|{}.!\\"
+    return "".join(f"\\{char}" if char in escape_chars else char for char in text)
 
 # Send message to Telegram
 def send_to_telegram(news):
@@ -64,24 +69,34 @@ def send_to_telegram(news):
         if article["title"] in posted_titles:
             continue  # Skip duplicate news
 
-        text = f"📰 *{article['title']}*\n\n🔗 [Read More]({article['link']})"
+        title = escape_markdown(article["title"])
+        text = f"📰 *{title}*\n\n🔗 [Read More]({article['link']})"
         image_url = article.get("image")
 
         if image_url and image_url.startswith("http"):
             send_photo_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
-            data = {"chat_id": CHAT_ID, "photo": image_url, "caption": text, "parse_mode": "Markdown"}
+            payload = {
+                "chat_id": CHAT_ID,
+                "photo": image_url,
+                "caption": text,
+                "parse_mode": "MarkdownV2"
+            }
+            response = requests.post(send_photo_url, json=payload)
         else:
-            send_photo_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-            data = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
+            send_message_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": CHAT_ID,
+                "text": text,
+                "parse_mode": "MarkdownV2"
+            }
+            response = requests.post(send_message_url, json=payload)
 
-        response = requests.post(send_photo_url, data=data)
         if response.status_code == 200:
-            posted_titles.add(article["title"])
+            save_posted_title(article["title"])
             new_posts += 1
         else:
             logging.error(f"Telegram post failed: {response.json()}")
 
-    save_posted_title(posted_titles)
     logging.info(f"✅ Posted {new_posts} new articles.")
 
 # Main function
