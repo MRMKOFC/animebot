@@ -11,9 +11,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.PASS_TOKEN }}  # Use the PASS_TOKEN for authentication
+        uses: actions/checkout@v3  # No need for a custom token
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -25,20 +23,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Anime News Bot
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Store your bot token in GitHub Secrets
-          CHAT_ID: ${{ secrets.CHAT_ID }}      # Store your chat ID in GitHub Secrets
-        run: |
-          python animebot.py
-
       - name: Ensure posted_titles.json exists
         run: |
           if [ ! -f posted_titles.json ]; then
             echo "[]" > posted_titles.json  # Create an empty JSON array if the file doesn't exist
           fi
 
+      - name: Run Anime News Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Store your bot token in GitHub Secrets
+          CHAT_ID: ${{ secrets.CHAT_ID }}      # Store your chat ID in GitHub Secrets
+        run: python animebot.py
+
       - name: Commit and push posted_titles.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Use GitHub's built-in token
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
