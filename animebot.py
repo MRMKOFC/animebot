@@ -5,6 +5,7 @@ import re
 import os
 import json
 import logging
+import pytz
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -27,7 +28,11 @@ if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID is missing. Check environment variables.")
     exit(1)
 
-# Create a session for HTTP requests
+# Time Zone Handling
+utc_tz = pytz.utc
+local_tz = pytz.timezone("Asia/Kolkata")  # Change if needed
+today_local = datetime.now(local_tz).date()
+
 session = requests.Session()
 
 def escape_markdown(text):
@@ -37,16 +42,14 @@ def escape_markdown(text):
     return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
 
 def load_posted_titles():
-    """Loads posted titles from file and logs them."""
+    """Loads posted titles from file."""
     try:
         if os.path.exists(POSTED_TITLES_FILE):
             with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as file:
-                titles = set(json.load(file))
-                logging.info(f"Loaded {len(titles)} posted titles.")
-                return titles
+                return set(json.load(file))
         return set()
-    except Exception as e:
-        logging.error(f"Error loading posted titles: {e}")
+    except json.JSONDecodeError:
+        logging.error("Error decoding posted_titles.json. Resetting file.")
         return set()
 
 def save_posted_title(title):
@@ -59,26 +62,9 @@ def save_posted_title(title):
     except Exception as e:
         logging.error(f"Error saving posted title: {e}")
 
-def normalize_date(date_text):
-    """Normalizes date text from ANN."""
-    try:
-        date_obj = datetime.strptime(date_text, "%b %d, %H:%M")
-        date_obj = date_obj.replace(year=datetime.now().year)
-
-        # Ensure no future dates
-        if date_obj > datetime.now():
-            date_obj = date_obj.replace(year=date_obj.year - 1)
-
-        return date_obj
-    except ValueError:
-        logging.error(f"Unknown date format: {date_text}")
-        return None
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_anime_news():
     """Fetches latest anime news from ANN."""
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    
     try:
         response = session.get(BASE_URL, timeout=5)
         response.raise_for_status()
@@ -90,29 +76,24 @@ def fetch_anime_news():
 
         for article in all_articles:
             title_tag = article.find("h3")
-            if not title_tag:
+            date_tag = article.find("time")
+            
+            if not title_tag or not date_tag:
                 continue
 
             title = title_tag.get_text(strip=True)
-            date_tag = article.find("time")
-            date_text = date_tag.get_text(strip=True) if date_tag else ""
+            date_str = date_tag["datetime"]  # Extract ISO 8601 date
+            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()  # Convert to local date
 
-            normalized_date = normalize_date(date_text)
-            if not normalized_date:
-                logging.warning(f"Skipping article due to date issue: {title}")
-                continue
+            if DEBUG_MODE or news_date == today_local:
+                link = title_tag.find("a")
+                article_url = f"{BASE_URL}{link['href']}" if link else None
+                news_list.append({"title": title, "article_url": article_url, "article": article})
+                logging.info(f"✅ Found today's news: {title}")
+            else:
+                logging.info(f"⏩ Skipping (not today's news): {title}")
 
-            if not DEBUG_MODE and normalized_date.date() != today.date():
-                logging.info(f"Skipping (not today’s news): {title}")
-                continue
-
-            link = title_tag.find("a")
-            article_url = f"{BASE_URL}{link['href']}" if link else None
-            logging.info(f"Detected article: {title} (URL: {article_url})")
-
-            news_list.append({"title": title, "article_url": article_url, "article": article})
-
-        logging.info(f"Filtered today’s articles: {len(news_list)}")
+        logging.info(f"Filtered today's articles: {len(news_list)}")
         return news_list
 
     except requests.RequestException as e:
@@ -125,13 +106,11 @@ def fetch_article_details(article_url, article):
     image_url = None
     summary = "No summary available."
 
-    # Extract thumbnail
     thumbnail = article.find("div", class_="thumbnail lazyload")
     if thumbnail and thumbnail.get("data-src"):
         img_url = thumbnail["data-src"]
         image_url = f"{BASE_URL}{img_url}" if not img_url.startswith("http") else img_url
 
-    # Fetch article content
     if article_url:
         try:
             article_response = session.get(article_url, timeout=5)
@@ -171,8 +150,8 @@ def send_to_telegram(title, image_url, summary):
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
     caption = f"✨ *{safe_title}* ✨\n\n📖 {safe_summary}\n\n🌟 [Powered By: `@TheAnimeTimes_acn`] 🌟"
-
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
+
     try:
         if image_url:
             response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
@@ -181,11 +160,9 @@ def send_to_telegram(title, image_url, summary):
         
         response.raise_for_status()
         save_posted_title(title)
-        logging.info(f"Posted: {title}")
-        return True
+        logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
-        return False
 
 def run_once():
     """Runs the bot once to fetch and post today’s news."""
