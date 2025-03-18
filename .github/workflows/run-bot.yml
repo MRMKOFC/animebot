@@ -1,9 +1,12 @@
-name: Run Anime News Bot
+name: Anime News Bot
 
 on:
   schedule:
     - cron: '*/30 * * * *'  # Runs every 30 minutes
   workflow_dispatch:  # Allows manual triggering
+
+permissions:
+  contents: write  # Grants permission to push changes
 
 jobs:
   run-bot:
@@ -25,12 +28,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Ensure posted_titles.json exists
-        run: |
-          if [ ! -f posted_titles.json ]; then
-            echo "[]" > posted_titles.json  # Create an empty JSON array if it doesn't exist
-          fi
-
       - name: Run Anime News Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}  # Store your bot token in GitHub Secrets
@@ -38,14 +35,22 @@ jobs:
         run: |
           python animebot.py
 
+      - name: Ensure posted_titles.json exists
+        run: |
+          if [ ! -f posted_titles.json ]; then
+            echo "[]" > posted_titles.json  # Create an empty JSON array if the file doesn't exist
+          fi
+
       - name: Commit and push posted_titles.json
         env:
           PASS_TOKEN: ${{ secrets.PASS_TOKEN }}
         run: |
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
-          git remote set-url origin https://MRMK0FC:${{ secrets.PASS_TOKEN }}@github.com/MRMK0FC/animebot.git
+          git remote set-url origin https://MRMKOFC:${{ secrets.PASS_TOKEN }}@github.com/MRMKOFC/animebot.git
           git add posted_titles.json
+          
+          # Check if there are changes before committing
           if git diff --cached --quiet; then
             echo "No changes to commit."
           else
