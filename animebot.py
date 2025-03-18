@@ -21,15 +21,11 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")  # Fetch from environment variables
 CHAT_ID = os.getenv("CHAT_ID")  # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 BASE_URL = "https://www.animenewsnetwork.com"
-TEMP_DIR = "temp_media"
 DEBUG_MODE = False  # Set True to test without date filter
 
 if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID is missing. Check environment variables.")
     exit(1)
-
-if not os.path.exists(TEMP_DIR):
-    os.makedirs(TEMP_DIR)
 
 # Create a session for HTTP requests
 session = requests.Session()
@@ -41,11 +37,13 @@ def escape_markdown(text):
     return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
 
 def load_posted_titles():
-    """Loads posted titles from file."""
+    """Loads posted titles from file and logs them."""
     try:
         if os.path.exists(POSTED_TITLES_FILE):
             with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as file:
-                return set(json.load(file))
+                titles = set(json.load(file))
+                logging.info(f"Loaded {len(titles)} posted titles.")
+                return titles
         return set()
     except Exception as e:
         logging.error(f"Error loading posted titles: {e}")
@@ -66,12 +64,60 @@ def normalize_date(date_text):
     try:
         date_obj = datetime.strptime(date_text, "%b %d, %H:%M")
         date_obj = date_obj.replace(year=datetime.now().year)
+
+        # Ensure no future dates
         if date_obj > datetime.now():
             date_obj = date_obj.replace(year=date_obj.year - 1)
+
         return date_obj
-    except Exception as e:
-        logging.error(f"Error normalizing date: {e}")
+    except ValueError:
+        logging.error(f"Unknown date format: {date_text}")
         return None
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def fetch_anime_news():
+    """Fetches latest anime news from ANN."""
+    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    try:
+        response = session.get(BASE_URL, timeout=5)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        news_list = []
+        all_articles = soup.find_all("div", class_="herald box news t-news")
+        logging.info(f"Total articles found: {len(all_articles)}")
+
+        for article in all_articles:
+            title_tag = article.find("h3")
+            if not title_tag:
+                continue
+
+            title = title_tag.get_text(strip=True)
+            date_tag = article.find("time")
+            date_text = date_tag.get_text(strip=True) if date_tag else ""
+
+            normalized_date = normalize_date(date_text)
+            if not normalized_date:
+                logging.warning(f"Skipping article due to date issue: {title}")
+                continue
+
+            if not DEBUG_MODE and normalized_date.date() != today.date():
+                logging.info(f"Skipping (not today’s news): {title}")
+                continue
+
+            link = title_tag.find("a")
+            article_url = f"{BASE_URL}{link['href']}" if link else None
+            logging.info(f"Detected article: {title} (URL: {article_url})")
+
+            news_list.append({"title": title, "article_url": article_url, "article": article})
+
+        logging.info(f"Filtered today’s articles: {len(news_list)}")
+        return news_list
+
+    except requests.RequestException as e:
+        logging.error(f"Fetch error: {e}")
+        return []
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_article_details(article_url, article):
@@ -100,50 +146,6 @@ def fetch_article_details(article_url, article):
             logging.error(f"Error fetching article content: {e}")
 
     return {"image": image_url, "summary": summary}
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-def fetch_anime_news():
-    """Fetches latest anime news from ANN."""
-    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    try:
-        response = session.get(BASE_URL, timeout=5)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        
-        news_list = []
-        all_articles = 0
-
-        for article in soup.find_all("div", class_="herald box news t-news"):
-            all_articles += 1
-            title_tag = article.find("h3")
-            if not title_tag:
-                continue
-
-            title = title_tag.get_text(strip=True)
-            date_tag = article.find("time")
-            date_text = date_tag.get_text(strip=True) if date_tag else ""
-
-            normalized_date = normalize_date(date_text)
-            if not normalized_date:
-                logging.info(f"Skipping article with invalid date: {title}")
-                continue
-
-            # Skip if not today's news (unless debugging)
-            if not DEBUG_MODE and normalized_date.date() != today.date():
-                logging.info(f"Skipping old article: {title}")
-                continue
-
-            link = title_tag.find("a")
-            article_url = f"{BASE_URL}{link['href']}" if link else None
-
-            news_list.append({"title": title, "article_url": article_url, "article": article})
-
-        logging.info(f"Total articles on ANN homepage: {all_articles}, Today’s news: {len(news_list)}")
-        return news_list
-
-    except requests.RequestException as e:
-        logging.error(f"Fetch error: {e}")
-        return []
 
 def fetch_selected_articles(news_list):
     """Fetches article details concurrently."""
