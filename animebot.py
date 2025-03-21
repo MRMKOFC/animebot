@@ -145,11 +145,11 @@ def fetch_selected_articles(news_list):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram."""
+    """Posts news to Telegram with exact formatting."""
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
-    caption = f"✨ *{safe_title}* ✨\n\n📖 {safe_summary}\n\n🌟 [Powered By: `@TheAnimeTimes_acn`] 🌟"
+    caption = f"{{*{safe_title}*}} ⚡\n\n```{safe_summary}```\n\n🍁 | @TheAnimeTimes_acn"
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
