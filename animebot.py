@@ -23,6 +23,8 @@ CHAT_ID = os.getenv("CHAT_ID")  # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 BASE_URL = "https://www.animenewsnetwork.com"
 DEBUG_MODE = False  # Set True to test without date filter
+TEST_MODE = False   # Set True to log messages without posting to Telegram
+RATE_LIMIT_DELAY = 2  # Delay between Telegram posts to avoid rate limiting (in seconds)
 
 if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID is missing. Check environment variables.")
@@ -36,10 +38,12 @@ today_local = datetime.now(local_tz).date()
 session = requests.Session()
 
 def escape_markdown(text):
-    """Escapes Telegram Markdown special characters."""
+    """Escapes Telegram MarkdownV2 special characters."""
     if not text or not isinstance(text, str):
         return ""
-    return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
+    # Telegram MarkdownV2 special characters that need escaping
+    special_chars = r"([_*[\]()~`>#\+\-=|{}.!\\])"
+    return re.sub(special_chars, r"\\\1", text)
 
 def load_posted_titles():
     """Loads posted titles from file."""
@@ -106,12 +110,23 @@ def fetch_article_details(article_url, article):
     image_url = None
     summary = "No summary available."
 
+    # Fetch image URL
     thumbnail = article.find("div", class_="thumbnail")
     if thumbnail and thumbnail.get("data-src"):
         image_url = thumbnail["data-src"]
         if not image_url.startswith("http"):
             image_url = f"{BASE_URL}{image_url}"
+        # Validate the image URL
+        try:
+            image_response = session.head(image_url, timeout=3)
+            if image_response.status_code != 200 or "image" not in image_response.headers.get("Content-Type", ""):
+                logging.warning(f"Invalid image URL: {image_url}")
+                image_url = None
+        except requests.RequestException as e:
+            logging.warning(f"Failed to validate image URL {image_url}: {e}")
+            image_url = None
 
+    # Fetch summary
     if article_url:
         try:
             article_response = session.get(article_url, timeout=5)
@@ -128,26 +143,77 @@ def fetch_article_details(article_url, article):
     return {"image": image_url, "summary": summary}
 
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram."""
+    """Posts news to Telegram with fallback to plain text if Markdown fails."""
+    # First attempt with MarkdownV2
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary)
-    
     caption = f"*{safe_title}*\n\n\"{safe_summary}\"\n\n🍁 | @TheAnimeTimes_acn"
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
-        logging.info(f"Attempting to post: {title}")
+        logging.info(f"Attempting to post: {title} with image: {image_url}")
+
+        if TEST_MODE:
+            logging.info(f"TEST MODE: Would post to Telegram with caption: {caption}")
+            return
 
         if image_url:
-            response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                data={"photo": image_url, **params},
+                timeout=5
+            )
         else:
-            response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"text": caption, **params}, timeout=5)
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={"text": caption, **params},
+                timeout=5
+            )
         
         response.raise_for_status()
         save_posted_title(title)
         logging.info(f"✅ Posted: {title}")
+
     except requests.RequestException as e:
-        logging.error(f"Telegram post failed: {e}")
+        # Log the error with full response
+        if hasattr(e, "response") and e.response is not None:
+            error_msg = e.response.text
+            logging.error(f"Telegram post failed (MarkdownV2): {e} - Response: {error_msg}")
+        else:
+            logging.error(f"Telegram post failed (MarkdownV2): {e}")
+
+        # Fallback to plain text
+        logging.info("Falling back to plain text due to MarkdownV2 failure...")
+        caption = f"{title}\n\n\"{summary}\"\n\n🍁 | @TheAnimeTimes_acn"
+        params = {"chat_id": CHAT_ID, "caption": caption}  # No parse_mode
+
+        try:
+            if TEST_MODE:
+                logging.info(f"TEST MODE: Would post to Telegram with plain text caption: {caption}")
+                return
+
+            if image_url:
+                response = session.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                    data={"photo": image_url, **params},
+                    timeout=5
+                )
+            else:
+                response = session.post(
+                    f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                    data={"text": caption, **params},
+                    timeout=5
+                )
+            
+            response.raise_for_status()
+            save_posted_title(title)
+            logging.info(f"✅ Posted (plain text): {title}")
+        except requests.RequestException as e:
+            if hasattr(e, "response") and e.response is not None:
+                logging.error(f"Telegram post failed (plain text): {e} - Response: {e.response.text}")
+            else:
+                logging.error(f"Telegram post failed (plain text): {e}")
+            raise  # Re-raise the exception to stop processing if both attempts fail
 
 def run_once():
     """Runs the bot once to fetch and post today’s news."""
@@ -164,6 +230,8 @@ def run_once():
                 result = future.result(timeout=10)
                 news = futures[future]
                 send_to_telegram(news["title"], result["image"], result["summary"])
+                # Add delay to avoid Telegram rate limiting
+                time.sleep(RATE_LIMIT_DELAY)
             except Exception as e:
                 logging.error(f"Error processing article: {e}")
 
