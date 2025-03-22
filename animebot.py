@@ -36,13 +36,17 @@ today_local = datetime.now(local_tz).date()
 date_threshold_past = today_local - timedelta(days=DATE_RANGE_DAYS)  # 3 days before today
 date_threshold_future = today_local + timedelta(days=DATE_RANGE_DAYS)  # 3 days after today
 
+# Log the date range for clarity
+logging.info(f"Today's date: {today_local}")
+logging.info(f"Date range for articles: {date_threshold_past} to {date_threshold_future}")
+
 session = requests.Session()
 
 def escape_markdown(text):
-    """Escapes Telegram Markdown special characters for MarkdownV2."""
+    """Escapes Telegram Markdown special characters for MarkdownV2, excluding quotation marks."""
     if not text or not isinstance(text, str):
         return ""
-    # Escaping characters for MarkdownV2 as per Telegram's requirements
+    # Escaping characters for MarkdownV2 as per Telegram's requirements, but exclude " to allow it in summary
     return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
 
 def load_posted_titles():
@@ -92,11 +96,13 @@ def fetch_anime_news():
             if DEBUG_MODE or (date_threshold_past <= news_date <= date_threshold_future):
                 link = title_tag.find("a")
                 article_url = f"{BASE_URL}{link['href']}" if link else None
-                news_list.append({"title": title, "article_url": article_url, "article": article})
+                news_list.append({"title": title, "article_url": article_url, "article": article, "date": news_date})
                 logging.info(f"✅ Found recent news (date: {news_date}): {title}")
             else:
                 logging.info(f"⏩ Skipping (outside {DATE_RANGE_DAYS}-day range, date: {news_date}): {title}")
 
+        # Sort articles by date, prioritizing today's news first
+        news_list.sort(key=lambda x: (x["date"] != today_local, x["date"]), reverse=True)
         logging.info(f"Filtered recent articles: {len(news_list)}")
         return news_list
 
@@ -161,14 +167,14 @@ def fetch_selected_articles(news_list):
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
     """Posts news to Telegram with updated formatting."""
-    # Escape the title and summary for MarkdownV2
+    # Escape the title and summary for MarkdownV2, but quotation mark will be added manually
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
 
     # Format the title as {**Title**} ⚡ (bold title inside curly braces)
     formatted_title = f"\\{{**{safe_title}**\\}} ⚡"
 
-    # Format the summary with quotation marks at the end
+    # Format the summary with quotation mark at the end (not escaped)
     formatted_summary = f"{safe_summary}\""
 
     # Get the current time in the local timezone for the timestamp
