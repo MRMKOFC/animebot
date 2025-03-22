@@ -23,8 +23,6 @@ CHAT_ID = os.getenv("CHAT_ID")  # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 BASE_URL = "https://www.animenewsnetwork.com"
 DEBUG_MODE = False  # Set True to test without date filter
-TEST_MODE = False   # Set True to log messages without posting to Telegram
-RATE_LIMIT_DELAY = 2  # Delay between Telegram posts to avoid rate limiting (in seconds)
 
 if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID is missing. Check environment variables.")
@@ -38,11 +36,10 @@ today_local = datetime.now(local_tz).date()
 session = requests.Session()
 
 def escape_markdown(text):
-    """Escapes Telegram MarkdownV2 special characters."""
+    """Escapes Telegram Markdown special characters."""
     if not text or not isinstance(text, str):
         return ""
-    special_chars = r"([_*[\]()~`>#\+\-=|{}.!\\])"
-    return re.sub(special_chars, r"\\\1", text)
+    return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
 
 def load_posted_titles():
     """Loads posted titles from file."""
@@ -51,7 +48,7 @@ def load_posted_titles():
             with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as file:
                 return set(json.load(file))
         return set()
-    except (json.JSONDecodeError, FileNotFoundError):
+    except json.JSONDecodeError:
         logging.error("Error decoding posted_titles.json. Resetting file.")
         return set()
 
@@ -77,22 +74,16 @@ def fetch_anime_news():
         all_articles = soup.find_all("div", class_="herald box news t-news")
         logging.info(f"Total articles found: {len(all_articles)}")
 
-        posted_titles = load_posted_titles()
-
         for article in all_articles:
             title_tag = article.find("h3")
             date_tag = article.find("time")
             
-            if not title_tag or not date_tag or "datetime" not in date_tag.attrs:
+            if not title_tag or not date_tag:
                 continue
 
             title = title_tag.get_text(strip=True)
-            date_str = date_tag["datetime"]
-            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()
-
-            if title in posted_titles:
-                logging.info(f"⏩ Skipping (already posted): {title}")
-                continue
+            date_str = date_tag["datetime"]  # Extract ISO 8601 date
+            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()  # Convert to local date
 
             if DEBUG_MODE or news_date == today_local:
                 link = title_tag.find("a")
@@ -115,14 +106,11 @@ def fetch_article_details(article_url, article):
     image_url = None
     summary = "No summary available."
 
-    # Fetch image URL
-    thumbnail = article.find("div", class_="thumbnail")
+    thumbnail = article.find("div", class_="thumbnail lazyload")
     if thumbnail and thumbnail.get("data-src"):
-        image_url = thumbnail["data-src"]
-        if not image_url.startswith("http"):
-            image_url = f"{BASE_URL}{image_url}"
+        img_url = thumbnail["data-src"]
+        image_url = f"{BASE_URL}{img_url}" if not img_url.startswith("http") else img_url
 
-    # Fetch summary
     if article_url:
         try:
             article_response = session.get(article_url, timeout=5)
@@ -132,43 +120,47 @@ def fetch_article_details(article_url, article):
             if content_div:
                 first_paragraph = content_div.find("p")
                 if first_paragraph:
-                    summary = first_paragraph.get_text(strip=True)[:200] + "..."
+                    summary = first_paragraph.get_text(strip=True)[:200] + "..." if len(first_paragraph.text) > 200 else first_paragraph.text
         except requests.RequestException as e:
             logging.error(f"Error fetching article content: {e}")
 
     return {"image": image_url, "summary": summary}
 
+def fetch_selected_articles(news_list):
+    """Fetches article details concurrently."""
+    posted_titles = load_posted_titles()
+    articles_to_fetch = [news for news in news_list if news["title"] not in posted_titles]
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(fetch_article_details, news["article_url"], news["article"]): news for news in articles_to_fetch}
+        
+        for future in futures:
+            try:
+                result = future.result(timeout=10)
+                news = futures[future]
+                news["image"] = result["image"]
+                news["summary"] = result["summary"]
+            except Exception as e:
+                logging.error(f"Error processing article: {e}")
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram with MarkdownV2 formatting."""
+    """Posts news to Telegram."""
     safe_title = escape_markdown(title)
-    safe_summary = escape_markdown(summary)
-    caption = f"⚡ *{safe_title}* ⚡\n\n\"{safe_summary}\"\n\n🍁 | @TheAnimeTimes_acn"
+    safe_summary = escape_markdown(summary) if summary else "No summary available"
+    
+    caption = f"⚡ *{safe_title}* ⚡\n\n {safe_summary}\n\n🍁 | @TheAnimeTimes_acn"
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
-        logging.info(f"Attempting to post: {title} with image: {image_url}")
-
-        if TEST_MODE:
-            logging.info(f"TEST MODE: Would post to Telegram with caption: {caption}")
-            return
-
         if image_url:
-            response = session.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data={"photo": image_url, **params},
-                timeout=5
-            )
+            response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
         else:
-            response = session.post(
-                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                data={"text": caption, **params},
-                timeout=5
-            )
+            response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"text": caption, **params}, timeout=5)
         
         response.raise_for_status()
         save_posted_title(title)
         logging.info(f"✅ Posted: {title}")
-
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
 
@@ -180,20 +172,12 @@ def run_once():
         logging.info("No new articles to post.")
         return
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(fetch_article_details, news["article_url"], news["article"]): news for news in news_list}
-        for future in futures:
-            try:
-                result = future.result(timeout=10)
-                news = futures[future]
-                send_to_telegram(news["title"], result["image"], result["summary"])
-                time.sleep(RATE_LIMIT_DELAY)
-            except Exception as e:
-                logging.error(f"Error processing article: {e}")
+    fetch_selected_articles(news_list)
+    
+    for news in news_list:
+        if news["title"] not in load_posted_titles():
+            send_to_telegram(news["title"], news["image"], news["summary"])
+            time.sleep(1)  # Avoid spam
 
 if __name__ == "__main__":
-    if not os.path.exists(POSTED_TITLES_FILE):
-        with open(POSTED_TITLES_FILE, "w", encoding="utf-8") as file:
-            json.dump([], file)
-    
     run_once()
