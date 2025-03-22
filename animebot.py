@@ -184,7 +184,7 @@ def send_to_telegram(title, image_url, summary):
 
         # Fallback to plain text
         logging.info("Falling back to plain text due to MarkdownV2 failure...")
-        caption = f"{title}\n\n\"{summary}\"\n\n🍁 | @TheAnimeTimes_acn"
+        caption = f"⚡{title}⚡\n\n\"{summary}\"\n\n🍁 | @TheAnimeTimes_acn"
         params = {"chat_id": CHAT_ID, "caption": caption}  # No parse_mode
 
         try:
