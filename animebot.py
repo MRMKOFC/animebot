@@ -36,7 +36,7 @@ today_local = datetime.now(local_tz).date()
 session = requests.Session()
 
 def escape_markdown(text):
-    """Escapes Telegram Markdown special characters."""
+    """Escapes Telegram MarkdownV2 special characters."""
     if not text or not isinstance(text, str):
         return ""
     return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
@@ -145,18 +145,37 @@ def fetch_selected_articles(news_list):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram."""
-    safe_title = escape_markdown(title)
+    """Posts news to Telegram with proper Markdown formatting."""
+    
+    safe_title = escape_markdown(title)  # Escape special characters
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
-    caption = f" *{safe_title}*⚡\n\n {safe_summary}\n\n 🍁|`@TheAnimeTimes_acn` "
-    params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
+    caption = (
+        f"*{safe_title}* ⚡\n"  # Bold title with lightning emoji
+        f"───────────────────────\n\n"  # Separator line
+        f"{safe_summary}\n\n"
+        f"🍁 | @TheAnimeTimes_acn"
+    )
+
+    params = {
+        "chat_id": CHAT_ID,
+        "caption": caption,
+        "parse_mode": "MarkdownV2",
+    }
 
     try:
         if image_url:
-            response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                data={"photo": image_url, **params},
+                timeout=5,
+            )
         else:
-            response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"text": caption, **params}, timeout=5)
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={"text": caption, **params},
+                timeout=5,
+            )
         
         response.raise_for_status()
         save_posted_title(title)
