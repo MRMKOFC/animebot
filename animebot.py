@@ -48,7 +48,7 @@ def load_posted_titles():
             with open(POSTED_TITLES_FILE, "r", encoding="utf-8") as file:
                 return set(json.load(file))
         return set()
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, FileNotFoundError):
         logging.error("Error decoding posted_titles.json. Resetting file.")
         return set()
 
@@ -78,12 +78,12 @@ def fetch_anime_news():
             title_tag = article.find("h3")
             date_tag = article.find("time")
             
-            if not title_tag or not date_tag:
+            if not title_tag or not date_tag or "datetime" not in date_tag.attrs:
                 continue
 
             title = title_tag.get_text(strip=True)
-            date_str = date_tag["datetime"]  # Extract ISO 8601 date
-            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()  # Convert to local date
+            date_str = date_tag["datetime"]
+            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()
 
             if DEBUG_MODE or news_date == today_local:
                 link = title_tag.find("a")
@@ -106,10 +106,11 @@ def fetch_article_details(article_url, article):
     image_url = None
     summary = "No summary available."
 
-    thumbnail = article.find("div", class_="thumbnail lazyload")
+    thumbnail = article.find("div", class_="thumbnail")
     if thumbnail and thumbnail.get("data-src"):
-        img_url = thumbnail["data-src"]
-        image_url = f"{BASE_URL}{img_url}" if not img_url.startswith("http") else img_url
+        image_url = thumbnail["data-src"]
+        if not image_url.startswith("http"):
+            image_url = f"{BASE_URL}{image_url}"
 
     if article_url:
         try:
@@ -120,58 +121,22 @@ def fetch_article_details(article_url, article):
             if content_div:
                 first_paragraph = content_div.find("p")
                 if first_paragraph:
-                    summary = first_paragraph.get_text(strip=True)[:200] + "..." if len(first_paragraph.text) > 200 else first_paragraph.text
+                    summary = first_paragraph.get_text(strip=True)[:200] + "..."
         except requests.RequestException as e:
             logging.error(f"Error fetching article content: {e}")
 
     return {"image": image_url, "summary": summary}
 
-def fetch_selected_articles(news_list):
-    """Fetches article details concurrently."""
-    posted_titles = load_posted_titles()
-    articles_to_fetch = [news for news in news_list if news["title"] not in posted_titles]
-
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(fetch_article_details, news["article_url"], news["article"]): news for news in articles_to_fetch}
-        
-        for future in futures:
-            try:
-                result = future.result(timeout=10)
-                news = futures[future]
-                news["image"] = result["image"]
-                news["summary"] = result["summary"]
-            except Exception as e:
-                logging.error(f"Error processing article: {e}")
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
     """Posts news to Telegram."""
     safe_title = escape_markdown(title)
-    safe_summary = escape_markdown(summary) if summary else "No summary available"
+    safe_summary = escape_markdown(summary)
     
-    # Format the caption with bold title and quoted summary
     caption = f"*{safe_title}*\n\n\"{safe_summary}\"\n\n🍁 | @TheAnimeTimes_acn"
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
         logging.info(f"Attempting to post: {title}")
-        logging.info(f"Caption: {caption}")
-        logging.info(f"Image URL: {image_url}")
-
-        # Validate image URL
-        if image_url:
-            # Clean up the image URL (remove spaces, fix extensions)
-            image_url = image_url.replace(" ", "").replace(".ong", ".jpg")
-            if not image_url.startswith("http"):
-                image_url = f"{BASE_URL}{image_url}"
-            
-            # Check if the image URL is accessible
-            try:
-                response = session.head(image_url, timeout=5)
-                response.raise_for_status()
-            except requests.RequestException as e:
-                logging.error(f"Invalid image URL: {image_url}. Skipping image.")
-                image_url = None
 
         if image_url:
             response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
@@ -183,7 +148,6 @@ def send_to_telegram(title, image_url, summary):
         logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
-        logging.error(f"Response content: {e.response.content if e.response else 'No response'}")
 
 def run_once():
     """Runs the bot once to fetch and post today’s news."""
@@ -193,15 +157,17 @@ def run_once():
         logging.info("No new articles to post.")
         return
 
-    fetch_selected_articles(news_list)
-    
-    for news in news_list:
-        if news["title"] not in load_posted_titles():
-            send_to_telegram(news["title"], news["image"], news["summary"])
-            time.sleep(1)  # Avoid spam
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(fetch_article_details, news["article_url"], news["article"]): news for news in news_list}
+        for future in futures:
+            try:
+                result = future.result(timeout=10)
+                news = futures[future]
+                send_to_telegram(news["title"], result["image"], result["summary"])
+            except Exception as e:
+                logging.error(f"Error processing article: {e}")
 
 if __name__ == "__main__":
-    # Ensure posted_titles.json exists
     if not os.path.exists(POSTED_TITLES_FILE):
         with open(POSTED_TITLES_FILE, "w", encoding="utf-8") as file:
             json.dump([], file)
