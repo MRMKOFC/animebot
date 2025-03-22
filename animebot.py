@@ -149,8 +149,13 @@ def send_to_telegram(title, image_url, summary):
     safe_title = escape_markdown(title)
 safe_summary = f'“{escape_markdown(summary)}”' if summary else "No summary available"
     
-    caption = f"⚡ *{safe_title}* ⚡\n\n {safe_summary}\n\n🍁| `@TheAnimeTimes_acn`"
-    params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
+    caption = f"⚡ *{safe_title}* ⚡\n\n “{safe_summary}”\n\n🍁| `@TheAnimeTimes_acn`"
+    params = {
+    "chat_id": CHAT_ID, 
+    "caption": caption, 
+    "parse_mode": "MarkdownV2",  # Ensure correct format
+    "disable_web_page_preview": True  # Prevent errors due to auto-link preview
+    }
 
     try:
         if image_url:
