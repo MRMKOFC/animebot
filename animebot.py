@@ -35,13 +35,11 @@ today_local = datetime.now(local_tz).date()
 
 session = requests.Session()
 
-
 def escape_markdown(text):
     """Escapes Telegram Markdown special characters."""
     if not text or not isinstance(text, str):
         return ""
     return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
-
 
 def load_posted_titles():
     """Loads posted titles from file."""
@@ -54,7 +52,6 @@ def load_posted_titles():
         logging.error("Error decoding posted_titles.json. Resetting file.")
         return set()
 
-
 def save_posted_title(title):
     """Saves a title to prevent duplicate posting."""
     try:
@@ -64,7 +61,6 @@ def save_posted_title(title):
             json.dump(list(titles), file)
     except Exception as e:
         logging.error(f"Error saving posted title: {e}")
-
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_anime_news():
@@ -81,18 +77,13 @@ def fetch_anime_news():
         for article in all_articles:
             title_tag = article.find("h3")
             date_tag = article.find("time")
-
+            
             if not title_tag or not date_tag:
                 continue
 
             title = title_tag.get_text(strip=True)
-            date_str = date_tag.get("datetime", "")
-
-            try:
-                news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()
-            except ValueError:
-                logging.warning(f"Skipping article due to invalid date: {title}")
-                continue
+            date_str = date_tag["datetime"]  # Extract ISO 8601 date
+            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()  # Convert to local date
 
             if DEBUG_MODE or news_date == today_local:
                 link = title_tag.find("a")
@@ -108,7 +99,6 @@ def fetch_anime_news():
     except requests.RequestException as e:
         logging.error(f"Fetch error: {e}")
         return []
-
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_article_details(article_url, article):
@@ -136,7 +126,6 @@ def fetch_article_details(article_url, article):
 
     return {"image": image_url, "summary": summary}
 
-
 def fetch_selected_articles(news_list):
     """Fetches article details concurrently."""
     posted_titles = load_posted_titles()
@@ -144,7 +133,7 @@ def fetch_selected_articles(news_list):
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(fetch_article_details, news["article_url"], news["article"]): news for news in articles_to_fetch}
-
+        
         for future in futures:
             try:
                 result = future.result(timeout=10)
@@ -154,33 +143,26 @@ def fetch_selected_articles(news_list):
             except Exception as e:
                 logging.error(f"Error processing article: {e}")
 
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
     """Posts news to Telegram."""
     safe_title = escape_markdown(title)
     safe_summary = f'“{escape_markdown(summary)}”' if summary else "No summary available"
-
+    
     caption = f"⚡ *{safe_title}* ⚡\n\n {safe_summary}\n\n🍁| `@TheAnimeTimes_acn`"
-    params = {
-        "chat_id": CHAT_ID,
-        "caption": caption,
-        "parse_mode": "MarkdownV2",
-        "disable_web_page_preview": True,
-    }
+    params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
         if image_url:
             response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
         else:
             response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"text": caption, **params}, timeout=5)
-
+        
         response.raise_for_status()
         save_posted_title(title)
         logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
-
 
 def run_once():
     """Runs the bot once to fetch and post today’s news."""
@@ -191,12 +173,11 @@ def run_once():
         return
 
     fetch_selected_articles(news_list)
-
+    
     for news in news_list:
         if news["title"] not in load_posted_titles():
             send_to_telegram(news["title"], news["image"], news["summary"])
-            time.sleep(1)
-
+            time.sleep(1)  # Avoid spam
 
 if __name__ == "__main__":
     run_once()
