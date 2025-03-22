@@ -154,6 +154,10 @@ def send_to_telegram(title, image_url, summary):
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
+        logging.info(f"Attempting to post: {title}")
+        logging.info(f"Caption: {caption}")
+        logging.info(f"Image URL: {image_url}")
+
         if image_url:
             response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
         else:
@@ -164,6 +168,7 @@ def send_to_telegram(title, image_url, summary):
         logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
+        logging.error(f"Response content: {e.response.content if e.response else 'No response'}")
 
 def run_once():
     """Runs the bot once to fetch and post today’s news."""
@@ -181,4 +186,9 @@ def run_once():
             time.sleep(1)  # Avoid spam
 
 if __name__ == "__main__":
+    # Ensure posted_titles.json exists
+    if not os.path.exists(POSTED_TITLES_FILE):
+        with open(POSTED_TITLES_FILE, "w", encoding="utf-8") as file:
+            json.dump([], file)
+    
     run_once()
