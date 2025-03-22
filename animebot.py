@@ -158,6 +158,21 @@ def send_to_telegram(title, image_url, summary):
         logging.info(f"Caption: {caption}")
         logging.info(f"Image URL: {image_url}")
 
+        # Validate image URL
+        if image_url:
+            # Clean up the image URL (remove spaces, fix extensions)
+            image_url = image_url.replace(" ", "").replace(".ong", ".jpg")
+            if not image_url.startswith("http"):
+                image_url = f"{BASE_URL}{image_url}"
+            
+            # Check if the image URL is accessible
+            try:
+                response = session.head(image_url, timeout=5)
+                response.raise_for_status()
+            except requests.RequestException as e:
+                logging.error(f"Invalid image URL: {image_url}. Skipping image.")
+                image_url = None
+
         if image_url:
             response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
         else:
