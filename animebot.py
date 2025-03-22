@@ -36,9 +36,10 @@ today_local = datetime.now(local_tz).date()
 session = requests.Session()
 
 def escape_markdown(text):
-    """Escapes Telegram Markdown special characters."""
+    """Escapes Telegram Markdown special characters for MarkdownV2."""
     if not text or not isinstance(text, str):
         return ""
+    # Escaping characters for MarkdownV2 as per Telegram's requirements
     return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
 
 def load_posted_titles():
@@ -145,11 +146,23 @@ def fetch_selected_articles(news_list):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram."""
+    """Posts news to Telegram with updated formatting."""
+    # Escape the title and summary for MarkdownV2
     safe_title = escape_markdown(title)
-    safe_summary = f'“{escape_markdown(summary)}”' if summary else "No summary available"
-    
-    caption = f"⚡ *{safe_title}* ⚡\n\n {safe_summary}\n\n🍁| `@TheAnimeTimes_acn`"
+    safe_summary = escape_markdown(summary) if summary else "No summary available"
+
+    # Format the title as {**Title**} ⚡ (bold title inside curly braces)
+    formatted_title = f"\\{{**{safe_title}**\\}} ⚡"
+
+    # Format the summary with quotation marks at the end
+    formatted_summary = f"{safe_summary}\""
+
+    # Get the current time in the local timezone for the timestamp
+    current_time = datetime.now(local_tz).strftime("%I:%M %p")  # e.g., 11:22 PM
+
+    # Format the caption as per the image
+    caption = f"{formatted_title}\n\n{formatted_summary}\n\n🍁 \\| @TheAnimeTimes_acn "
+
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
