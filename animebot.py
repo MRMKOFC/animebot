@@ -46,8 +46,9 @@ def escape_markdown(text):
     """Escapes Telegram Markdown special characters for MarkdownV2, excluding quotation marks."""
     if not text or not isinstance(text, str):
         return ""
-    # Escaping characters for MarkdownV2 as per Telegram's requirements, but exclude " to allow it in summary
-    return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
+    # Escaping all MarkdownV2 special characters as per Telegram's requirements, excluding " for summary
+    special_chars = r"([_*[\]()~`>#\+\-=|{}.!\\])"
+    return re.sub(special_chars, r"\\\1", text)
 
 def load_posted_titles():
     """Loads posted titles from file."""
@@ -166,7 +167,7 @@ def fetch_selected_articles(news_list):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram with updated formatting."""
+    """Posts news to Telegram with updated formatting, without timestamp."""
     # Escape the title and summary for MarkdownV2, but quotation mark will be added manually
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
@@ -177,11 +178,8 @@ def send_to_telegram(title, image_url, summary):
     # Format the summary with quotation mark at the end (not escaped)
     formatted_summary = f"{safe_summary}\""
 
-    # Get the current time in the local timezone for the timestamp
-    current_time = datetime.now(local_tz).strftime("%I:%M %p")  # e.g., 11:22 PM
-
-    # Format the caption as per the image
-    caption = f"{formatted_title}\n\n{formatted_summary}\n\n🍁 \\| @TheAnimeTimes_acn {current_time}"
+    # Format the caption without the timestamp
+    caption = f"{formatted_title}\n\n{formatted_summary}\n\n🍁 \\| @TheAnimeTimes_acn"
 
     # Log the caption for debugging
     logging.info(f"Attempting to send caption: {caption}")
@@ -204,7 +202,7 @@ def send_to_telegram(title, image_url, summary):
 
         # Fallback: Try sending without MarkdownV2
         logging.info("Falling back to plain text message...")
-        plain_caption = f"{{ {title} }} ⚡\n\n{summary}\"\n\n🍁 | @TheAnimeTimes_acn {current_time}"
+        plain_caption = f"⚡ {{ {title} }} ⚡\n\n{summary}\"\n\n🍁 | @TheAnimeTimes_acn"
         params = {"chat_id": CHAT_ID, "caption": plain_caption}
 
         try:
