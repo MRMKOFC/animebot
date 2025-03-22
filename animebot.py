@@ -6,7 +6,7 @@ import os
 import json
 import logging
 import pytz
-from datetime import datetime, timedelta
+from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -22,8 +22,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")  # Fetch from environment variables
 CHAT_ID = os.getenv("CHAT_ID")  # Fetch from environment variables
 POSTED_TITLES_FILE = "posted_titles.json"
 BASE_URL = "https://www.animenewsnetwork.com"
-DEBUG_MODE = False  # Set to False for production mode
-DATE_RANGE_DAYS = 3  # Process articles within a 3-day range (past and future)
+DEBUG_MODE = False  # Set True to test without date filter
 
 if not BOT_TOKEN or not CHAT_ID:
     logging.error("BOT_TOKEN or CHAT_ID is missing. Check environment variables.")
@@ -33,22 +32,14 @@ if not BOT_TOKEN or not CHAT_ID:
 utc_tz = pytz.utc
 local_tz = pytz.timezone("Asia/Kolkata")  # Change if needed
 today_local = datetime.now(local_tz).date()
-date_threshold_past = today_local - timedelta(days=DATE_RANGE_DAYS)  # 3 days before today
-date_threshold_future = today_local + timedelta(days=DATE_RANGE_DAYS)  # 3 days after today
-
-# Log the date range for clarity
-logging.info(f"Today's date: {today_local}")
-logging.info(f"Date range for articles: {date_threshold_past} to {date_threshold_future}")
 
 session = requests.Session()
 
 def escape_markdown(text):
-    """Escapes Telegram Markdown special characters for MarkdownV2, excluding quotation marks."""
+    """Escapes Telegram Markdown special characters."""
     if not text or not isinstance(text, str):
         return ""
-    # Escaping all MarkdownV2 special characters as per Telegram's requirements, excluding " for summary
-    special_chars = r"([_*[\]()~`>#\+\-=|{}.!\\])"
-    return re.sub(special_chars, r"\\\1", text)
+    return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
 
 def load_posted_titles():
     """Loads posted titles from file."""
@@ -94,17 +85,15 @@ def fetch_anime_news():
             date_str = date_tag["datetime"]  # Extract ISO 8601 date
             news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()  # Convert to local date
 
-            if DEBUG_MODE or (date_threshold_past <= news_date <= date_threshold_future):
+            if DEBUG_MODE or news_date == today_local:
                 link = title_tag.find("a")
                 article_url = f"{BASE_URL}{link['href']}" if link else None
-                news_list.append({"title": title, "article_url": article_url, "article": article, "date": news_date})
-                logging.info(f"✅ Found recent news (date: {news_date}): {title}")
+                news_list.append({"title": title, "article_url": article_url, "article": article})
+                logging.info(f"✅ Found today's news: {title}")
             else:
-                logging.info(f"⏩ Skipping (outside {DATE_RANGE_DAYS}-day range, date: {news_date}): {title}")
+                logging.info(f"⏩ Skipping (not today's news): {title}")
 
-        # Sort articles by date, prioritizing today's news first
-        news_list.sort(key=lambda x: (x["date"] != today_local, x["date"]), reverse=True)
-        logging.info(f"Filtered recent articles: {len(news_list)}")
+        logging.info(f"Filtered today's articles: {len(news_list)}")
         return news_list
 
     except requests.RequestException as e:
@@ -121,17 +110,6 @@ def fetch_article_details(article_url, article):
     if thumbnail and thumbnail.get("data-src"):
         img_url = thumbnail["data-src"]
         image_url = f"{BASE_URL}{img_url}" if not img_url.startswith("http") else img_url
-        # Validate the image URL by making a HEAD request
-        try:
-            response = session.head(image_url, timeout=5, allow_redirects=True)
-            if response.status_code != 200 or 'image' not in response.headers.get('Content-Type', '').lower():
-                logging.warning(f"Invalid image URL: {image_url} (Status: {response.status_code})")
-                image_url = None
-            else:
-                logging.info(f"Valid image URL: {image_url}")
-        except requests.RequestException as e:
-            logging.warning(f"Failed to validate image URL: {image_url} - {e}")
-            image_url = None
 
     if article_url:
         try:
@@ -167,23 +145,11 @@ def fetch_selected_articles(news_list):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram with updated formatting, without timestamp."""
-    # Escape the title and summary for MarkdownV2, but quotation mark will be added manually
+    """Posts news to Telegram."""
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
-
-    # Format the title as {**Title**} ⚡ (bold title inside curly braces)
-    formatted_title = f"\\{{**{safe_title}**\\}} ⚡"
-
-    # Format the summary with quotation mark at the end (not escaped)
-    formatted_summary = f"{safe_summary}\""
-
-    # Format the caption without the timestamp
-    caption = f"{formatted_title}\n\n{formatted_summary}\n\n🍁 \\| @TheAnimeTimes_acn"
-
-    # Log the caption for debugging
-    logging.info(f"Attempting to send caption: {caption}")
-
+    
+    caption = f"⚡ *{safe_title}* ⚡\n\n {safe_summary}\n\n🍁 | @TheAnimeTimes_acn"
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
@@ -196,31 +162,10 @@ def send_to_telegram(title, image_url, summary):
         save_posted_title(title)
         logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
-        logging.error(f"Telegram post failed with MarkdownV2: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-            logging.error(f"Response content: {e.response.text}")
-
-        # Fallback: Try sending without MarkdownV2
-        logging.info("Falling back to plain text message...")
-        plain_caption = f"⚡ {{ {title} }} ⚡\n\n{summary}\"\n\n🍁 | @TheAnimeTimes_acn"
-        params = {"chat_id": CHAT_ID, "caption": plain_caption}
-
-        try:
-            if image_url:
-                response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto", data={"photo": image_url, **params}, timeout=5)
-            else:
-                response = session.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", data={"text": plain_caption, **params}, timeout=5)
-            
-            response.raise_for_status()
-            save_posted_title(title)
-            logging.info(f"✅ Posted (plain text fallback): {title}")
-        except requests.RequestException as e:
-            logging.error(f"Telegram post failed (plain text fallback): {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logging.error(f"Response content: {e.response.text}")
+        logging.error(f"Telegram post failed: {e}")
 
 def run_once():
-    """Runs the bot once to fetch and post recent news."""
+    """Runs the bot once to fetch and post today’s news."""
     logging.info("Fetching latest anime news...")
     news_list = fetch_anime_news()
     if not news_list:
