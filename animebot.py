@@ -147,9 +147,9 @@ def fetch_selected_articles(news_list):
 def send_to_telegram(title, image_url, summary):
     """Posts news to Telegram."""
     safe_title = escape_markdown(title)
-    safe_summary = escape_markdown(summary) if summary else "No summary available"
+    safe_summary = f'“{escape_markdown(summary)}”' if summary else "No summary available"
     
-    caption = f"⚡ *{safe_title}* ⚡\n\n📖 {safe_summary}\n\n🍁: `@TheAnimeTimes_acn`"
+    caption = f"⚡ *{safe_title}* ⚡\n\n {safe_summary}\n\n🍁| `@TheAnimeTimes_acn`"
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
