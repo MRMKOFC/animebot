@@ -149,7 +149,8 @@ def send_to_telegram(title, image_url, summary):
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
-    caption = f"⚡ *{safe_title}* ⚡\n\n {safe_summary}\n\n🍁 | @TheAnimeTimes_acn"
+    # Format the caption with bold title and quoted summary
+    caption = f"*{safe_title}*\n\n\"{safe_summary}\"\n\n🍁 | @TheAnimeTimes_acn"
     params = {"chat_id": CHAT_ID, "caption": caption, "parse_mode": "MarkdownV2"}
 
     try:
