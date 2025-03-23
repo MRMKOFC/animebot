@@ -117,4 +117,88 @@ def fetch_article_details(article_url, article):
             article_response = session.get(article_url, timeout=5)
             article_response.raise_for_status()
             article_soup = BeautifulSoup(article_response.text, "html.parser")
-            content_div = article_soup.find("div", class
+            content_div = article_soup.find("div", class_="meat") or article_soup.find("div", class_="content")
+            if content_div:
+                first_paragraph = content_div.find("p")
+                if first_paragraph:
+                    summary = first_paragraph.get_text(strip=True)[:200] + "..." if len(first_paragraph.text) > 200 else first_paragraph.text
+        except requests.RequestException as e:
+            logging.error(f"Error fetching article content: {e}")
+
+    return {"image": image_url, "summary": summary}
+
+def fetch_selected_articles(news_list):
+    """Fetches article details concurrently."""
+    posted_titles = load_posted_titles()
+    articles_to_fetch = [news for news in news_list if news["title"] not in posted_titles]
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(fetch_article_details, news["article_url"], news["article"]): news for news in articles_to_fetch}
+        
+        for future in futures:
+            try:
+                result = future.result(timeout=10)
+                news = futures[future]
+                news["image"] = result["image"]
+                news["summary"] = result["summary"]
+            except Exception as e:
+                logging.error(f"Error processing article: {e}")
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def send_to_telegram(title, image_url, summary):
+    """Posts news to Telegram with proper Markdown formatting."""
+    safe_title = escape_markdown(title)
+    safe_summary = escape_markdown(summary) if summary else "No summary available"
+    
+    # Ensure `*` characters are properly escaped in the caption
+    caption = (
+        f"*{safe_title}* ⚡\n"  # <-- `*` is used intentionally for italic formatting
+        f"───────────────────────\n\n"
+        f"{safe_summary}\n\n"
+        f"🍁 \\| @TheAnimeTimes_acn"  # <-- Escaped `|` with `\\|`
+    )
+
+    params = {
+        "chat_id": CHAT_ID,
+        "caption": caption,
+        "parse_mode": "MarkdownV2",
+    }
+
+    try:
+        if image_url and image_url.startswith("http"):
+            params["photo"] = image_url
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                data=params,
+                timeout=5,
+            )
+        else:
+            response = session.post(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+                data={"text": caption, **params},
+                timeout=5,
+            )
+        
+        response.raise_for_status()
+        save_posted_title(title)
+        logging.info(f"✅ Posted: {title}")
+    except requests.RequestException as e:
+        logging.error(f"Telegram post failed: {e}")
+        logging.error(f"API Response: {response.text}")  # Log the API response
+
+def run_once():
+    logging.info("Fetching latest anime news...")
+    news_list = fetch_anime_news()
+    if not news_list:
+        logging.info("No new articles to post.")
+        return
+
+    fetch_selected_articles(news_list)
+    
+    for news in news_list:
+        if news["title"] not in load_posted_titles():
+            send_to_telegram(news["title"], news["image"], news["summary"])
+            time.sleep(1)  # Add a delay to avoid hitting Telegram's rate limits
+
+if __name__ == "__main__":
+    run_once()
