@@ -158,6 +158,9 @@ def send_to_telegram(title, image_url, summary):
         f"🍁 \\| @TheAnimeTimes_acn"  # <-- Escaped `|` with `\\|`
     )
 
+    # Log the caption for debugging
+    logging.info(f"Caption: {caption}")
+
     params = {
         "chat_id": CHAT_ID,
         "caption": caption,
