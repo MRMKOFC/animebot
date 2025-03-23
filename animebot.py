@@ -39,7 +39,7 @@ def escape_markdown(text):
     """Escapes Telegram MarkdownV2 special characters."""
     if not text or not isinstance(text, str):
         return ""
-    return re.sub(r"([_*[\]()~`>#\+\-=|{}.!\\])", r"\\\1", text)
+    return re.sub(r"([_*()~`>#+\-=|{}.!])", r"\\\1", text)
 
 def load_posted_titles():
     """Loads posted titles from file."""
@@ -146,19 +146,17 @@ def fetch_selected_articles(news_list):
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
-    """Posts news to Telegram with proper Markdown formatting."""
+    """Posts news to Telegram with proper MarkdownV2 formatting."""
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
-    # Ensure `*` characters are properly escaped in the caption
     caption = (
-        f"*{safe_title}* ⚡\n"  # <-- `*` is used intentionally for italic formatting
+        f"*{safe_title}* ⚡\n"
         f"───────────────────────\n\n"
         f"{safe_summary}\n\n"
-        f"🍁 \\| @TheAnimeTimes_acn"  # <-- Escaped `|` with `\\|`
+        f"🍁 | @TheAnimeTimes_acn"
     )
 
-    # Log the caption for debugging
     logging.info(f"Caption: {caption}")
 
     params = {
@@ -169,16 +167,15 @@ def send_to_telegram(title, image_url, summary):
 
     try:
         if image_url and image_url.startswith("http"):
-            params["photo"] = image_url
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data=params,
+                data={"chat_id": CHAT_ID, "photo": image_url, "caption": caption, "parse_mode": "MarkdownV2"},
                 timeout=5,
             )
         else:
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-                data={"text": caption, **params},
+                json={"chat_id": CHAT_ID, "text": caption, "parse_mode": "MarkdownV2"},
                 timeout=5,
             )
         
@@ -187,7 +184,6 @@ def send_to_telegram(title, image_url, summary):
         logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
-        logging.error(f"API Response: {response.text}")  # Log the API response
 
 def run_once():
     logging.info("Fetching latest anime news...")
@@ -201,7 +197,7 @@ def run_once():
     for news in news_list:
         if news["title"] not in load_posted_titles():
             send_to_telegram(news["title"], news["image"], news["summary"])
-            time.sleep(1)  # Add a delay to avoid hitting Telegram's rate limits
+            time.sleep(1)
 
 if __name__ == "__main__":
     run_once()
