@@ -177,7 +177,7 @@ def send_to_telegram(title, image_url, summary):
     # Format the caption with a bold title, a line, summary, and the required ending
     caption = (
         f"<b>{safe_title}</b> ⚡\n"
-        f"﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋"
+        f"﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏"
         f"{safe_summary}\n"
         f"﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋"
         f"🍁| @TheAnimeTimes_acn"
@@ -188,7 +188,7 @@ def send_to_telegram(title, image_url, summary):
         safe_summary = safe_summary[:1024 - len(safe_title) - 50] + "..."
         caption = (
             f"<b>{safe_title}</b> ⚡\n"
-            f"﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋"
+            f"﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏﹏"
             f"{safe_summary}\n"
             f"﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋﹋"
             f"🍁| @TheAnimeTimes_acn"
