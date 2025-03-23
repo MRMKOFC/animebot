@@ -166,10 +166,10 @@ def send_to_telegram(title, image_url, summary):
 
     try:
         if image_url:
+            params["photo"] = image_url
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data=params, 
-                files={"photo": (image_url, session.get(image_url).content)},  
+                data=params,
                 timeout=5,
             )
         else:
