@@ -39,7 +39,9 @@ def escape_markdown(text):
     """Escapes Telegram MarkdownV2 special characters."""
     if not text or not isinstance(text, str):
         return ""
-    return re.sub(r"([_*()~`>#+\-=|{}.!])", r"\\\1", text)
+    # Escape all special MarkdownV2 characters
+    special_chars = r"([_*[\]()~`>#+-={}|.!\\])"
+    return re.sub(special_chars, r"\\\1", text)
 
 def load_posted_titles():
     """Loads posted titles from file."""
@@ -61,6 +63,20 @@ def save_posted_title(title):
             json.dump(list(titles), file)
     except Exception as e:
         logging.error(f"Error saving posted title: {e}")
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+def validate_image_url(image_url):
+    """Validates if the image URL is accessible."""
+    if not image_url:
+        return False
+    try:
+        response = session.head(image_url, timeout=3)
+        response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+        return content_type.startswith("image/")
+    except requests.RequestException:
+        logging.warning(f"Invalid or inaccessible image URL: {image_url}")
+        return False
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def fetch_anime_news():
@@ -143,19 +159,36 @@ def fetch_selected_articles(news_list):
                 news["summary"] = result["summary"]
             except Exception as e:
                 logging.error(f"Error processing article: {e}")
+                news = futures[future]
+                news["image"] = None
+                news["summary"] = "Failed to fetch summary."
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
     """Posts news to Telegram with proper MarkdownV2 formatting."""
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
-    
+
+    # Ensure the summary isn't too long
+    if len(safe_summary) > 800:  # Leave room for title and formatting
+        safe_summary = safe_summary[:800] + "..."
+
     caption = (
         f"*{safe_title}* ⚡\n"
         f"───────────────────────\n\n"
         f"{safe_summary}\n\n"
         f"🍁 | @TheAnimeTimes_acn"
     )
+
+    # Ensure the caption doesn't exceed Telegram's 1024-character limit
+    if len(caption) > 1024:
+        safe_summary = safe_summary[:1024 - len(safe_title) - 50] + "..."
+        caption = (
+            f"*{safe_title}* ⚡\n"
+            f"───────────────────────\n\n"
+            f"{safe_summary}\n\n"
+            f"🍁 | @TheAnimeTimes_acn"
+        )
 
     logging.info(f"Caption: {caption}")
 
@@ -166,13 +199,16 @@ def send_to_telegram(title, image_url, summary):
     }
 
     try:
-        if image_url and image_url.startswith("http"):
+        # Validate image URL before sending
+        if image_url and validate_image_url(image_url):
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
                 data={"chat_id": CHAT_ID, "photo": image_url, "caption": caption, "parse_mode": "MarkdownV2"},
                 timeout=5,
             )
         else:
+            # Fallback to sendMessage if image is invalid
+            logging.warning(f"No valid image for {title}, sending as text message.")
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
                 json={"chat_id": CHAT_ID, "text": caption, "parse_mode": "MarkdownV2"},
@@ -184,6 +220,7 @@ def send_to_telegram(title, image_url, summary):
         logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
+        raise  # Re-raise for retry
 
 def run_once():
     logging.info("Fetching latest anime news...")
@@ -196,8 +233,12 @@ def run_once():
     
     for news in news_list:
         if news["title"] not in load_posted_titles():
-            send_to_telegram(news["title"], news["image"], news["summary"])
-            time.sleep(1)
+            try:
+                send_to_telegram(news["title"], news["image"], news["summary"])
+                time.sleep(2)  # Increase delay to 2 seconds to be safe
+            except Exception as e:
+                logging.error(f"Failed to post {news['title']}: {e}")
+                time.sleep(5)  # Wait longer after a failure to avoid rate limiting
 
 if __name__ == "__main__":
     run_once()
