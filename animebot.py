@@ -150,11 +150,12 @@ def send_to_telegram(title, image_url, summary):
     safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
+    # Escape the `|` character in the caption
     caption = (
         f"*{safe_title}* ⚡\n"
         f"───────────────────────\n\n"
         f"{safe_summary}\n\n"
-        f"🍁 | @TheAnimeTimes_acn"
+        f"🍁 \\| @TheAnimeTimes_acn"  # <-- Escaped `|` with `\\|`
     )
 
     params = {
