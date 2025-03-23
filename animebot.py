@@ -147,8 +147,7 @@ def fetch_selected_articles(news_list):
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
 def send_to_telegram(title, image_url, summary):
     """Posts news to Telegram with proper Markdown formatting."""
-    
-    safe_title = escape_markdown(title)  
+    safe_title = escape_markdown(title)
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
     caption = (
@@ -165,7 +164,7 @@ def send_to_telegram(title, image_url, summary):
     }
 
     try:
-        if image_url:
+        if image_url and image_url.startswith("http"):
             params["photo"] = image_url
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
@@ -184,6 +183,7 @@ def send_to_telegram(title, image_url, summary):
         logging.info(f"✅ Posted: {title}")
     except requests.RequestException as e:
         logging.error(f"Telegram post failed: {e}")
+        logging.error(f"API Response: {response.text}")  # Log the API response
 
 def run_once():
     logging.info("Fetching latest anime news...")
@@ -197,7 +197,7 @@ def run_once():
     for news in news_list:
         if news["title"] not in load_posted_titles():
             send_to_telegram(news["title"], news["image"], news["summary"])
-            time.sleep(1)
+            time.sleep(1)  # Add a delay to avoid hitting Telegram's rate limits
 
 if __name__ == "__main__":
     run_once()
