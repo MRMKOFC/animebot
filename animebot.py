@@ -82,8 +82,8 @@ def fetch_anime_news():
                 continue
 
             title = title_tag.get_text(strip=True)
-            date_str = date_tag["datetime"]  # Extract ISO 8601 date
-            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()  # Convert to local date
+            date_str = date_tag["datetime"]  
+            news_date = datetime.fromisoformat(date_str).astimezone(local_tz).date()  
 
             if DEBUG_MODE or news_date == today_local:
                 link = title_tag.find("a")
@@ -110,6 +110,7 @@ def fetch_article_details(article_url, article):
     if thumbnail and thumbnail.get("data-src"):
         img_url = thumbnail["data-src"]
         image_url = f"{BASE_URL}{img_url}" if not img_url.startswith("http") else img_url
+        logging.info(f"🔹 Extracted Image URL: {image_url}")
 
     if article_url:
         try:
@@ -147,12 +148,12 @@ def fetch_selected_articles(news_list):
 def send_to_telegram(title, image_url, summary):
     """Posts news to Telegram with proper Markdown formatting."""
     
-    safe_title = escape_markdown(title)  # Escape special characters
+    safe_title = escape_markdown(title)  
     safe_summary = escape_markdown(summary) if summary else "No summary available"
     
     caption = (
-        f"*{safe_title}* ⚡\n"  # Bold title with lightning emoji
-        f"───────────────────────\n\n"  # Separator line
+        f"*{safe_title}* ⚡\n"
+        f"───────────────────────\n\n"
         f"{safe_summary}\n\n"
         f"🍁 | @TheAnimeTimes_acn"
     )
@@ -167,7 +168,8 @@ def send_to_telegram(title, image_url, summary):
         if image_url:
             response = session.post(
                 f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                data={"photo": image_url, **params},
+                data=params, 
+                files={"photo": (image_url, session.get(image_url).content)},  
                 timeout=5,
             )
         else:
@@ -184,7 +186,6 @@ def send_to_telegram(title, image_url, summary):
         logging.error(f"Telegram post failed: {e}")
 
 def run_once():
-    """Runs the bot once to fetch and post today’s news."""
     logging.info("Fetching latest anime news...")
     news_list = fetch_anime_news()
     if not news_list:
@@ -196,7 +197,7 @@ def run_once():
     for news in news_list:
         if news["title"] not in load_posted_titles():
             send_to_telegram(news["title"], news["image"], news["summary"])
-            time.sleep(1)  # Avoid spam
+            time.sleep(1)
 
 if __name__ == "__main__":
     run_once()
