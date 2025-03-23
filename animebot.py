@@ -187,7 +187,7 @@ def send_to_telegram(title, image_url, summary):
         safe_summary = safe_summary[:1024 - len(safe_title) - 50] + "..."
         caption = (
             f"<b>{safe_title}</b> ⚡\n"
-            f"─────\n\n"
+            f"───────────────────────\n\n"
             f"{safe_summary}\n\n"
             f"🍁| @TheAnimeTimes_acn"
         )
