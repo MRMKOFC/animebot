@@ -143,7 +143,7 @@ def fetch_article_details(article_url, article):
             if content_div:
                 first_paragraph = content_div.find("p")
                 if first_paragraph:
-                    summary = first_paragraph.get_text(strip=True)[:200] + "..." if len(first_paragraph.text) > 200 else first_paragraph.text
+                    summary = first_paragraph.get_text(strip=True)[:300] + "..." if len(first_paragraph.text) > 300 else first_paragraph.text
         except requests.RequestException as e:
             logging.error(f"Error fetching article content: {e}")
 
